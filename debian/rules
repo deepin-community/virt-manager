@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_python3:
+	dh_python3 usr/share/virt-manager
+
+override_dh_auto_test:
+	# run it with English locales only, as it does not work otherwise:
+	# https://github.com/virt-manager/virt-manager/issues/199
+#	LANG=C LANGUAGE=C pytest-3 -v -rs
+
+override_dh_auto_install:
+	python3 setup.py --no-update-icon-cache --no-compile-schemas install --force --root=debian/tmp --no-compile -O0
+
+override_dh_installdocs:
+	dh_installdocs --all NEWS.md
+
+override_dh_bugfiles:
+	dh_bugfiles --all

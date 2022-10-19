@@ -1,0 +1,5 @@
+data/gschemas.compiled
+man/virt-clone.1
+man/virt-install.1
+man/virt-manager.1
+man/virt-xml.1
