@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-#
 # Copyright 2005-2014 Red Hat, Inc.
 #
 # This work is licensed under the GNU GPLv2 or later.
@@ -75,7 +73,7 @@ def convert_old_printxml(options):
 def convert_old_sound(options):
     if not options.sound:
         return
-    for idx in range(len(options.sound)):
+    for idx, dummy in enumerate(options.sound):
         if options.sound[idx] is None:
             options.sound[idx] = "default"
 
@@ -145,8 +143,10 @@ def convert_old_disks(options):
 
 
 def convert_old_os_options(options):
-    if not options.os_variant and options.old_os_type:
-        options.os_variant = options.old_os_type
+    if not options.old_os_type:
+        return
+    log.warning(
+        _("--os-type is deprecated and does nothing. Please stop using it."))
     del(options.old_os_type)
 
 
@@ -354,18 +354,26 @@ def _show_memory_warnings(guest):
             "Were you trying to specify GiB?"), rammb)
 
 
-def show_guest_warnings(options, guest, osdata):
+def _needs_accurate_osinfo(guest):
+    # HVM is really the only case where OS impacts what we set for defaults,
+    # so far.
+    #
+    # Historically we would only warn about missing osinfo on x86, but
+    # with the change to make osinfo mandatory we relaxed the arch check,
+    # so virt-install behavior is more consistent.
+    return guest.os.is_hvm()
+
+
+def show_guest_warnings(options, guest):
     if options.pxe and not supports_pxe(guest):
         log.warning(
             _("The guest's network configuration may not support PXE"))
 
-    # Limit it to hvm x86 guests which presently our defaults
-    # only really matter for
-    if (guest.osinfo.name == "generic" and
-        not osdata.is_generic_requested() and
-        guest.os.is_x86() and guest.os.is_hvm()):
-        log.warning(_("No operating system detected, VM performance may "
-            "suffer. Specify an OS with --os-variant for optimal results."))
+    if guest.osinfo.is_generic() and _needs_accurate_osinfo(guest):
+        log.warning(
+            _("Using --osinfo {osname}, VM performance may suffer. "
+              "Specify an accurate OS for optimal results.").format(
+            osname=guest.osinfo.name))
 
     _show_memory_warnings(guest)
 
@@ -423,7 +431,9 @@ def build_installer(options, guest, installdata):
         pass
     elif (options.import_install or
           options.xmlonly or
-          options.boot):
+          options.boot or
+          options.cloud_init or
+          options.unattended):
         no_install = True
 
     installer = virtinst.Installer(guest.conn,
@@ -453,13 +463,15 @@ def build_installer(options, guest, installdata):
     return installer
 
 
-def set_cli_defaults(options, guest):
+def set_cli_default_name(guest):
     if not guest.name:
         default_name = virtinst.Guest.generate_name(guest)
         cli.print_stdout(_("Using default --name {vm_name}").format(
             vm_name=default_name))
         guest.name = default_name
 
+
+def set_cli_defaults(options, guest):
     if guest.os.is_container():
         if not memory_specified(guest):
             mbram = 1024
@@ -491,11 +503,7 @@ def set_cli_defaults(options, guest):
 
     if ncpus:
         # We need to do this upfront, so we don't incorrectly set guest.vcpus
-        guest.sync_vcpus_topology()
-        if not guest.vcpus:
-            # I don't think we need to print anything here as this was never
-            # a required value.
-            guest.vcpus = ncpus
+        guest.sync_vcpus_topology(ncpus)
 
     if storage and not storage_specified(options, guest):
         diskstr = 'size=%d' % (storage // (1024 ** 3))
@@ -533,7 +541,7 @@ def set_explicit_guest_options(options, guest):
 def installer_detect_distro(guest, installer, osdata):
     os_set = False
     try:
-        # OS name has to be set firstly whenever --os-variant is passed,
+        # OS name has to be set firstly whenever --osinfo is passed,
         # otherwise it won't be respected when the installer creates the
         # Distro Store.
         if osdata.get_name():
@@ -548,8 +556,62 @@ def installer_detect_distro(guest, installer, osdata):
     except ValueError as e:
         fail(_("Error validating install location: %s") % str(e))
 
-    if not os_set and osdata.is_require():
-        fail(_("An --os-variant is required, but no value was set or detected."))
+    msg = _(
+        "--os-variant/--osinfo OS name is required, but no value was\n"
+        "set or detected.")
+    if os_set:
+        return
+    if osdata.is_require_on():
+        fail(msg)
+    if not osdata.is_require_default():
+        return
+
+    if not _needs_accurate_osinfo(guest):
+        return
+
+    fail_msg = msg + "\n\n"
+    fail_msg += _(
+        "This is now a fatal error. Specifying an OS name is required\n"
+        "for modern, performant, and secure virtual machine defaults.\n")
+
+    detect_msg = _(
+        "If you expected virt-install to detect an OS name from the\n"
+        "install media, you can set a fallback OS name with:\n"
+        "\n"
+        "  --osinfo detect=on,name=OSNAME\n")
+    possibly_detectable = bool(installer.location or installer.cdrom)
+    if possibly_detectable:
+        fail_msg += "\n" + detect_msg
+
+    fail_msg += "\n" + _(
+        "You can see a full list of possible OS name values with:\n"
+        "\n"
+        "   virt-install --osinfo list\n")
+
+    generic_linux_names = [o.name for o in virtinst.OSDB.list_os() if
+                           o.is_linux_generic()]
+    generic_linux_msg = _(
+        "If your Linux distro is not listed, try one of generic values\n"
+        "such as: {oslist}\n").format(oslist=", ".join(generic_linux_names))
+    if generic_linux_names:
+        fail_msg += "\n" + generic_linux_msg
+
+    envkey = "VIRTINSTALL_OSINFO_DISABLE_REQUIRE"
+    fail_msg += "\n" + _(
+        "If you just need to get the old behavior back, you can use:\n"
+        "\n"
+        "  --osinfo detect=on,require=off\n"
+        "\n"
+        "Or export {env_var}=1\n"
+        ).format(env_var=envkey)
+
+    fail_msg = "\n" + fail_msg
+    if envkey in os.environ:
+        log.warning(fail_msg)
+        m = _("{env_var} set. Skipping fatal error.").format(env_var=envkey)
+        log.warning(m)
+    else:
+        fail(fail_msg)
 
 
 def _build_options_guest(conn, options):
@@ -558,12 +620,18 @@ def _build_options_guest(conn, options):
 
     # Fill in guest from the command line content
     set_explicit_guest_options(options, guest)
-    cli.parse_option_strings(options, guest, None)
-    cli.parse_xmlcli(guest, options)
+
+    # We do these two parser bit early, since Installer setup will
+    # depend on them, but delay the rest to later, since things like
+    # disk naming can depend on Installer operations
+    cli.run_parser(options, guest, cli.ParserBoot)
+    options.boot = None
+    cli.run_parser(options, guest, cli.ParserMetadata)
+    options.metadata = None
 
     # Call set_capabilities_defaults explicitly here rather than depend
     # on set_defaults calling it. Installer setup needs filled in values.
-    # However we want to do it after parse_option_strings to ensure
+    # However we want to do it after run_all_parsers to ensure
     # we are operating on any arch/os/type values passed in with --boot
     guest.set_capabilities_defaults()
 
@@ -586,6 +654,11 @@ def build_guest_instance(conn, options):
     installer_detect_distro(guest, installer, osdata)
 
     if not options.reinstall:
+        # We want to fill in --name before we do disk parsing, since
+        # default disk paths are generated based on VM name
+        set_cli_default_name(guest)
+        cli.run_all_parsers(options, guest)
+        cli.parse_xmlcli(guest, options)
         set_cli_defaults(options, guest)
 
     installer.set_install_defaults(guest)
@@ -600,7 +673,7 @@ def build_guest_instance(conn, options):
             cli.validate_mac(net.conn, net.macaddr)
 
     validate_required_options(options, guest, installer)
-    show_guest_warnings(options, guest, osdata)
+    show_guest_warnings(options, guest)
 
     return guest, installer
 
@@ -1118,6 +1191,8 @@ def main(conn=None):
     cli.setupLogging("virt-install", options.debug, options.quiet)
 
     if cli.check_option_introspection(options):
+        return 0
+    if cli.check_osinfo_list(options):
         return 0
 
     check_cdrom_option_error(options)

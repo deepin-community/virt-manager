@@ -201,10 +201,6 @@ class vmmHostNets(vmmGObjectUI):
         if not netstr:
             return
 
-        forward = net.get_ipv4_forward_mode()
-        self.widget("net-ipv4-forwarding-icon").set_from_stock(
-            forward and Gtk.STOCK_CONNECT or Gtk.STOCK_DISCONNECT,
-            Gtk.IconSize.MENU)
         self.widget("net-ipv4-forwarding").set_text(net.pretty_forward_mode())
 
         dhcpstr = _("Disabled")
@@ -217,9 +213,6 @@ class vmmHostNets(vmmGObjectUI):
         (netstr, (dhcpstart, dhcpend)) = net.get_ipv6_network()
 
         self.widget("net-ipv6-expander").set_visible(bool(netstr))
-        self.widget("net-ipv6-forwarding-icon").set_from_stock(
-            netstr and Gtk.STOCK_CONNECT or Gtk.STOCK_DISCONNECT,
-            Gtk.IconSize.MENU)
 
         if netstr:
             prettymode = _("Routed network")
@@ -246,9 +239,8 @@ class vmmHostNets(vmmGObjectUI):
         uiutil.set_grid_row_visible(self.widget("net-name-domain"),
                                        bool(net.get_name_domain()))
 
-        state = active and _("Active") or _("Inactive")
         icon = (active and ICON_RUNNING or ICON_SHUTOFF)
-        self.widget("net-state").set_text(state)
+        self.widget("net-state").set_text(net.run_status())
         self.widget("net-state-icon").set_from_icon_name(icon,
                                                          Gtk.IconSize.BUTTON)
 

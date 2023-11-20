@@ -162,7 +162,7 @@ These options decide what action to take after altering the XML. In the common c
 
 
 ``--start``
-    Start the VM after performing the requeseted changes. If combined with --no-define, this will create transient VM boot with the requested changes.
+    Start the VM after performing the requested changes. If combined with --no-define, this will create transient VM boot with the requested changes.
 
 
 ``--print-diff``
@@ -191,10 +191,10 @@ GUEST OS OPTIONS
     have been stored in the guest configuration during installation and virt-xml
     will retrieve it from there automatically.
 
-    Use the command "osinfo-query os" to get the list of the accepted OS
-    variants.
+    Use the command ``virt-xml --osinfo list`` to get the list of the
+    accepted OS variants. See ``osinfo-query os`` for even more output.
 
-    See virt-install(1) documentation for more details about ``--os-variant``
+    See virt-install(1) documentation for more details about ``--os-variant/--osinfo``
 
 
 XML OPTIONS
@@ -235,6 +235,7 @@ XML OPTIONS
 * ``--hostdev``
 * ``--filesystem``
 * ``--sound``
+* ``--audio``
 * ``--watchdog``
 * ``--video``
 * ``--smartcard``
@@ -243,6 +244,7 @@ XML OPTIONS
 * ``--tpm``
 * ``--rng``
 * ``--panic``
+* ``--shmem``
 * ``--memdev``
 
 These options alter the XML for a single class of XML elements. More complete documentation is found in virt-install(1).
@@ -254,6 +256,17 @@ Option strings are in the format of: --option opt=val,opt2=val2,...  example: --
 For any option, use --option=? to see a list of all available sub options, example: --disk=?  or  --boot=?
 
 --help output also lists a few general examples. See the EXAMPLES section below for some common examples.
+
+virt-xml specifically has some operations that don't really apply to virt-install
+Examples:
+
+``--boot refresh-machine-type=yes``
+    Refresh the XML ``<os><type machine=X></os>`` value to the latest one
+    that qemu provides. For example, if your VM has a machine type value
+    ``pc-q35-4.0``, this will reset the value to ``q35``, and works
+    similarly with other versioned machine types. Occasionally this is
+    necessary to get enable qemu bug fixes, or when qemu deprecates and
+    removes old machine type values.
 
 
 MISCELLANEOUS OPTIONS
@@ -377,7 +390,7 @@ for the guest OS by providing information about it on the command line:
 
 .. code-block::
 
-   # virt-xml fedora18 --os-variant fedora18 --add-device \
+   # virt-xml fedora18 --osinfo fedora18 --add-device \
      --disk /var/lib/libvirt/images/newimage.qcow2,format=qcow2,size=10
 
 

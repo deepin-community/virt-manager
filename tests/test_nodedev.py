@@ -8,6 +8,7 @@
 import os.path
 
 import pytest
+import libvirt
 
 from virtinst import Guest
 from virtinst import NodeDevice
@@ -124,6 +125,50 @@ def testDRMDevice():
     assert dev.devnodes[1].node_type == "link"
     assert dev.is_drm_render() is True
     assert dev.get_devnode("frob")
+
+
+def testDASDMdev():
+    conn = utils.URIs.open_testdriver_cached()
+    devname = "mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110"
+    dev = _nodeDevFromName(conn, devname)
+    assert dev.name == devname
+    assert dev.parent == "css_0_0_0023"
+    assert dev.device_type == "mdev"
+    assert dev.type_id == "vfio_ccw-io"
+
+
+def testAPQNMdev():
+    conn = utils.URIs.open_testdriver_cached()
+    devname = "mdev_11f92c9d_b0b0_4016_b306_a8071277f8b9"
+    dev = _nodeDevFromName(conn, devname)
+    assert dev.name == devname
+    assert dev.parent == "ap_matrix"
+    assert dev.device_type == "mdev"
+    assert dev.type_id == "vfio_ap-passthrough"
+
+
+def testPCIMdev():
+    conn = utils.URIs.open_testdriver_cached()
+    devname = "mdev_4b20d080_1b54_4048_85b3_a6a62d165c01"
+    dev = _nodeDevFromName(conn, devname)
+    assert dev.name == devname
+    assert dev.parent == "pci_0000_06_00_0"
+    assert dev.device_type == "mdev"
+    assert dev.type_id == "nvidia-11"
+    assert dev.get_mdev_uuid() == "4b20d080-1b54-4048-85b3-a6a62d165c01"
+
+
+# libvirt <7.3.0 doesn't support <uuid> in the mdev node device xml
+@pytest.mark.skipif(libvirt.getVersion() < 7003000, reason="libvirt version doesn't support new mdev format")
+def testPCIMdevNewFormat():
+    conn = utils.URIs.open_testdriver_cached()
+    devname = "mdev_35ceae7f_eea5_4f28_b7f3_7b12a3e62d3c_0000_06_00_0"
+    dev = _nodeDevFromName(conn, devname)
+    assert dev.name == devname
+    assert dev.parent == "pci_0000_06_00_0"
+    assert dev.device_type == "mdev"
+    assert dev.type_id == "nvidia-11"
+    assert dev.get_mdev_uuid() == "35ceae7f-eea5-4f28-b7f3-7b12a3e62d3c"
 
 
 # NodeDevice 2 Device XML tests

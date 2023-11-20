@@ -14,10 +14,10 @@
       <description>When to scale the VM graphical console. -1 = global default, 0 = never, 1 = only when in full screen mode, 2 = Always</description>
     </key>
 
-    <key name="console-password" type="(si)">
-      <default>("", -1)</default>
-      <summary>Username and secrets ID for graphical password</summary>
-      <description>Username and secrets ID for graphical password</description>
+    <key name="console-username" type="s">
+      <default>""</default>
+      <summary>Username for graphical password</summary>
+      <description>Username for graphical password</description>
     </key>
 
     <key name="resize-guest" type="i">
@@ -66,7 +66,7 @@
     </key>
 
     <key name="enable-libguestfs-vm-inspection" type="b">
-      <default>true</default>
+      <default>false</default>
       <summary>Enable libguestfs VM inspection</summary>
       <description>Enable libguestfs VM inspection for things like OS icons, installed applications, etc. This only works if python libguestfs bindings are installed.</description>
     </key>
@@ -263,6 +263,12 @@
       <default>'default'</default>
       <summary>CPU setting to use for new VMs</summary>
       <description>CPU setting to use for new VMs. Limited to VMs matching the host architecture. Possible values: default (virt-manager default), hv-default (qemu's default), host-model-only (just the model, not the additional features), host-model (libvirt's host-model setting), host-passthrough (libvirt's host-passthrough setting).</description>
+    </key>
+
+    <key name="firmware" type="s">
+      <default>'default'</default>
+      <summary>Use selected firmware for new VM booting</summary>
+      <description>Firmware used for new VMs. Possible values are default and UEFI. The firmware used is determined by libvirt unless a specific firmware is selected from the Customize dialog.</description>
     </key>
 
   </schema>

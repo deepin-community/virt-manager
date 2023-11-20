@@ -22,30 +22,23 @@
       <spinlocks state="on" retries="8191"/>
     </hyperv>
   </features>
-  <cpu mode="host-model"/>
+  <cpu mode="host-passthrough"/>
   <clock offset="localtime">
     <timer name="rtc" tickpolicy="catchup"/>
     <timer name="pit" tickpolicy="delay"/>
     <timer name="hpet" present="no"/>
     <timer name="hypervclock" present="yes"/>
   </clock>
-  <on_reboot>destroy</on_reboot>
   <pm>
     <suspend-to-mem enabled="no"/>
     <suspend-to-disk enabled="no"/>
   </pm>
   <devices>
-    <emulator>/usr/bin/qemu-kvm</emulator>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
     <disk type="file" device="cdrom">
       <driver name="qemu"/>
-      <source file="tests/data/fakemedia/fake-win7.iso"/>
+      <source file="TESTSUITE_SCRUBBED/tests/data/fakemedia/fake-win7.iso"/>
       <target dev="sda" bus="sata"/>
-      <readonly/>
-    </disk>
-    <disk type="file" device="cdrom">
-      <driver name="qemu" type="raw"/>
-      <source file="/VIRTINST-TESTSUITE/unattended.iso"/>
-      <target dev="sdb" bus="sata"/>
       <readonly/>
     </disk>
     <controller type="usb" model="ich9-ehci1"/>
@@ -58,6 +51,21 @@
     <controller type="usb" model="ich9-uhci3">
       <master startport="4"/>
     </controller>
+    <controller type="pci" model="pcie-root"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
     <interface type="bridge">
       <source bridge="testsuitebr0"/>
       <mac address="00:11:22:33:44:55"/>
@@ -72,7 +80,14 @@
     <rng model="virtio">
       <backend model="random">/dev/urandom</backend>
     </rng>
+    <disk type="file" device="cdrom">
+      <driver name="qemu" type="raw"/>
+      <source file="/VIRTINST-TESTSUITE/unattended.iso"/>
+      <target dev="sdb" bus="sata"/>
+      <readonly/>
+    </disk>
   </devices>
+  <on_reboot>destroy</on_reboot>
 </domain>
 <domain type="kvm">
   <name>win7</name>
@@ -98,7 +113,7 @@
       <spinlocks state="on" retries="8191"/>
     </hyperv>
   </features>
-  <cpu mode="host-model"/>
+  <cpu mode="host-passthrough"/>
   <clock offset="localtime">
     <timer name="rtc" tickpolicy="catchup"/>
     <timer name="pit" tickpolicy="delay"/>
@@ -110,15 +125,11 @@
     <suspend-to-disk enabled="no"/>
   </pm>
   <devices>
-    <emulator>/usr/bin/qemu-kvm</emulator>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
     <disk type="file" device="cdrom">
       <driver name="qemu"/>
-      <source file="tests/data/fakemedia/fake-win7.iso"/>
+      <source file="TESTSUITE_SCRUBBED/tests/data/fakemedia/fake-win7.iso"/>
       <target dev="sda" bus="sata"/>
-      <readonly/>
-    </disk>
-    <disk type="file" device="cdrom">
-      <target dev="sdb" bus="sata"/>
       <readonly/>
     </disk>
     <controller type="usb" model="ich9-ehci1"/>
@@ -131,6 +142,21 @@
     <controller type="usb" model="ich9-uhci3">
       <master startport="4"/>
     </controller>
+    <controller type="pci" model="pcie-root"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
     <interface type="bridge">
       <source bridge="testsuitebr0"/>
       <mac address="00:11:22:33:44:55"/>
@@ -145,5 +171,9 @@
     <rng model="virtio">
       <backend model="random">/dev/urandom</backend>
     </rng>
+    <disk type="file" device="cdrom">
+      <target dev="sdb" bus="sata"/>
+      <readonly/>
+    </disk>
   </devices>
 </domain>

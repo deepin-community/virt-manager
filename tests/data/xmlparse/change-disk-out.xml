@@ -37,7 +37,7 @@
     <disk type="file" device="floppy">
       <target dev="fde" bus="fdc"/>
     </disk>
-    <disk type="block" device="lun" sgio="unfiltered" rawio="yes">
+    <disk type="block" device="lun">
       <driver name="qemu" type="raw"/>
       <source dev="/dev/sda"/>
       <target dev="hdd" bus="scsi"/>
@@ -61,7 +61,7 @@
         <total_bytes_sec>6</total_bytes_sec>
       </iotune>
       <driver cache="writeback" discard="unmap" detect_zeroes="unmap" io="native"/>
-      <source file="/dev/default-pool/default-vol" startupPolicy="optional"/>
+      <source file="/pool-dir/default-vol" startupPolicy="optional"/>
       <shareable/>
     </disk>
     <disk type="block" device="floppy">

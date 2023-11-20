@@ -35,9 +35,16 @@ def _pretty_name(xmlobj):
         return _usb_pretty_name(xmlobj)
 
     if xmlobj.device_type == "drm":
-        parent = NodeDevice.lookupNodedevFromString(
+        parent = NodeDevice.lookupNodedevByName(
                 xmlobj.conn, xmlobj.parent)
-        return "%s (%s)" % (_pretty_name(parent), xmlobj.drm_type)
+
+        # https://github.com/virt-manager/virt-manager/issues/328
+        # Apparently we can't depend on successful parent lookup
+        pretty_parent = xmlobj.parent
+        if parent:
+            pretty_parent = _pretty_name(parent)
+
+        return "%s (%s)" % (pretty_parent, xmlobj.drm_type)
 
     return xmlobj.name  # pragma: no cover
 
@@ -53,10 +60,20 @@ class vmmNodeDevice(vmmLibvirtObject):
 
     def _XMLDesc(self, flags):
         return self._backend.XMLDesc(flags)
-    def _get_backend_status(self):
-        return self._STATUS_ACTIVE
     def _using_events(self):
         return self.conn.using_node_device_events
+    def _get_backend_status(self):
+        is_active = True
+        if self.conn.support.nodedev_isactive(self._backend):
+            is_active = self._backend.isActive()  # pragma: no cover
+
+        if self.conn.is_test() and self.xmlobj.name.endswith("-fakeinactive"):
+            # Testsuite hack to mock inactive device
+            is_active = False
+
+        return (is_active and
+                self._STATUS_ACTIVE or
+                self._STATUS_INACTIVE)
 
     def pretty_name(self):
         return _pretty_name(self.xmlobj)

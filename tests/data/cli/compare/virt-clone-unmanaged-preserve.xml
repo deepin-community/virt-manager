@@ -15,11 +15,11 @@
   <devices>
     <disk type="file" device="disk">
       <target dev="hda" bus="ide"/>
-      <source file="virt-install"/>
+      <source file="TESTSUITE_SCRUBBED/virt-install"/>
     </disk>
     <disk type="file" device="disk">
       <target dev="hdb" bus="ide"/>
-      <source file="/dev/default-pool/testvol1.img"/>
+      <source file="/pool-dir/testvol1.img"/>
     </disk>
     <disk type="file" device="cdrom">
       <target dev="hdc" bus="ide"/>

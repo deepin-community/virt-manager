@@ -17,9 +17,11 @@ class CloudInitData():
     root_password_generate = None
     root_password_file = None
     generated_root_password = None
-    ssh_key = None
+    root_ssh_key = None
+    clouduser_ssh_key = None
     user_data = None
     meta_data = None
+    network_config = None
 
     def _generate_password(self):
         if not self.generated_root_password:
@@ -42,9 +44,13 @@ class CloudInitData():
             return self._get_password(self.root_password_file)
         return self.get_password_if_generated()
 
-    def get_ssh_key(self):
-        if self.ssh_key:
-            return self._get_password(self.ssh_key)
+    def get_root_ssh_key(self):
+        if self.root_ssh_key:
+            return self._get_password(self.root_ssh_key)
+
+    def get_clouduser_ssh_key(self):
+        if self.clouduser_ssh_key:
+            return self._get_password(self.clouduser_ssh_key)
 
 
 def _create_metadata_content(cloudinit_data):
@@ -75,19 +81,37 @@ def _create_userdata_content(cloudinit_data):
     elif cloudinit_data.root_password_file:
         content += "  expire: False\n"
 
-    if cloudinit_data.ssh_key:
-        rootpass = cloudinit_data.get_ssh_key()
+    if cloudinit_data.root_ssh_key or cloudinit_data.clouduser_ssh_key:
         content += "users:\n"
-        content += "  - name: root\n"
-        content += "    ssh-authorized-keys:\n"
-        content += "      - %s\n" % rootpass
+        rootkey = cloudinit_data.get_root_ssh_key()
+        userkey = cloudinit_data.get_clouduser_ssh_key()
+
+        if rootkey:
+            content += "  - name: root\n"
+            content += "    ssh-authorized-keys:\n"
+            content += "      - %s\n" % rootkey
+        if userkey:
+            content += "  - ssh-authorized-keys: %s\n" % userkey
 
     if cloudinit_data.disable:
         content += "runcmd:\n"
-        content += "- [ sudo, touch, /etc/cloud/cloud-init.disabled ]\n"
+        content += ('- echo "Disabled by virt-install" > '
+                    "/etc/cloud/cloud-init.disabled\n")
 
-    log.debug("Generated cloud-init userdata: \n%s",
-            re.sub(r"root:(.*)", 'root:[SCRUBBLED]', content))
+    clean_content = re.sub(r"root:(.*)", 'root:[SCRUBBLED]', content)
+    if "VIRTINST_TEST_SUITE_PRINT_CLOUDINIT" in os.environ:
+        print(clean_content)
+
+    log.debug("Generated cloud-init userdata: \n%s", clean_content)
+    return content
+
+
+def _create_network_config_content(cloudinit_data):
+    content = ""
+    if cloudinit_data.network_config:
+        log.debug("Using network-config content from path=%s",
+                  cloudinit_data.network_config)
+        content = open(cloudinit_data.network_config).read()
     return content
 
 
@@ -95,10 +119,14 @@ def create_files(scratchdir, cloudinit_data):
     metadata = _create_metadata_content(cloudinit_data)
     userdata = _create_userdata_content(cloudinit_data)
 
+    data = [(metadata, "meta-data"), (userdata, "user-data")]
+    network_config = _create_network_config_content(cloudinit_data)
+    if network_config:
+        data.append((network_config, 'network-config'))
+
     filepairs = []
     try:
-        for content, destfile in [(metadata, "meta-data"),
-                                  (userdata, "user-data")]:
+        for content, destfile in data:
             fileobj = tempfile.NamedTemporaryFile(
                     prefix="virtinst-", suffix=("-%s" % destfile),
                     dir=scratchdir, delete=False)

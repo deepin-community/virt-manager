@@ -765,6 +765,7 @@ class vmmConnection(vmmGObject):
         _add_domain_xml_event("VIR_DOMAIN_EVENT_ID_DEVICE_ADDED", 19)
         _add_domain_xml_event("VIR_DOMAIN_EVENT_ID_AGENT_LIFECYCLE", 18,
                               self._domain_agent_lifecycle_event)
+        _add_domain_xml_event("VIR_DOMAIN_EVENT_ID_METADATA_CHANGE", 23)
 
         try:
             _check_events_disabled()
@@ -949,11 +950,6 @@ class vmmConnection(vmmGObject):
         return False, ConnectError
 
     def _populate_initial_state(self):
-        log.debug("libvirt version=%s", self._backend.local_libvirt_version())
-        log.debug("daemon version=%s", self._backend.daemon_version())
-        log.debug("conn version=%s", self._backend.conn_version())
-        log.debug("%s capabilities:\n%s", self.get_uri(), self.caps.get_xml())
-
         if not self.support.conn_domain():  # pragma: no cover
             raise RuntimeError("Connection does not support required "
                     "domain listing APIs")

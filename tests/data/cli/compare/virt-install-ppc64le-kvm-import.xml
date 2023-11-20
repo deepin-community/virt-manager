@@ -18,7 +18,7 @@
     <emulator>/usr/libexec/qemu-kvm</emulator>
     <disk type="file" device="disk">
       <driver name="qemu" type="qcow2"/>
-      <source file="/dev/default-pool/testvol1.img"/>
+      <source file="/pool-dir/testvol1.img"/>
       <target dev="vda" bus="virtio"/>
     </disk>
     <controller type="usb" model="qemu-xhci" ports="15"/>
@@ -32,12 +32,9 @@
       <source mode="bind"/>
       <target type="virtio" name="org.qemu.guest_agent.0"/>
     </channel>
-    <input type="tablet" bus="usb"/>
-    <input type="keyboard" bus="usb"/>
-    <graphics type="vnc" port="-1"/>
-    <video>
-      <model type="vga"/>
-    </video>
+    <tpm>
+      <backend type="emulator"/>
+    </tpm>
     <memballoon model="virtio"/>
     <rng model="virtio">
       <backend model="random">/dev/urandom</backend>

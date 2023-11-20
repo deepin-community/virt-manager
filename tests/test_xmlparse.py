@@ -134,8 +134,10 @@ def testAlterGuest():
     check("loader", None, "/foo/loader")
     check("init", None, "/sbin/init")
     check("bootorder", ["hd"], ["fd"])
-    check("enable_bootmenu", None, False)
-    check("useserial", None, True)
+    check("bootmenu_enable", None, False)
+    check("bootmenu_timeout", None, 30000)
+    check("bios_useserial", None, True)
+    check("bios_rebootTimeout", None, -1)
     check("kernel", None)
     check("initrd", None)
     check("kernel_args", None)
@@ -160,6 +162,7 @@ def testAlterGuest():
     check("kvm_hidden", None, True)
     check("pvspinlock", None, True)
     check("gic_version", None, False)
+    check("ioapic_driver", None, "qemu")
 
     check = _make_checker(guest.cpu)
     check("match", "exact", "strict")
@@ -227,7 +230,7 @@ def testAlterCpuMode():
     conn = utils.URIs.open_testdefault_cached()
     xml = open(DATADIR + "change-cpumode-in.xml").read()
     outfile = DATADIR + "change-cpumode-out.xml"
-    conn = utils.URIs.openconn(utils.URIs.kvm_q35)
+    conn = utils.URIs.openconn(utils.URIs.kvm_x86)
     guest = virtinst.Guest(conn, xml)
     check = _make_checker(guest.cpu)
 
@@ -311,8 +314,6 @@ def testAlterDisk():
     check = _make_checker(disk)
     check("type", "block")
     check("device", "lun")
-    check("sgio", None, "unfiltered")
-    check("rawio", None, "yes")
 
     disk = _get_disk("sda")
     check = _make_checker(disk)
@@ -321,7 +322,7 @@ def testAlterDisk():
 
     disk = _get_disk("fda")
     check = _make_checker(disk)
-    disk.set_source_path("/dev/default-pool/default-vol")
+    disk.set_source_path("/pool-dir/default-vol")
     disk.sync_path_props()
     check("startup_policy", None, "optional")
     check("shareable", False, True)
@@ -615,25 +616,25 @@ def testChangeKVMMedia():
     guest, outfile = _get_test_content(kvmconn, "change-media")
 
     disk = guest.devices.disk[0]
-    disk.set_source_path("/dev/default-pool/default-vol")
+    disk.set_source_path("/pool-dir/default-vol")
     disk.sync_path_props()
 
     disk = guest.devices.disk[1]
-    disk.set_source_path("/dev/default-pool/default-vol")
-    assert disk.get_source_path() == "/dev/default-pool/default-vol"
-    disk.set_source_path("/dev/disk-pool/diskvol1")
+    disk.set_source_path("/pool-dir/default-vol")
+    assert disk.get_source_path() == "/pool-dir/default-vol"
+    disk.set_source_path("/dev/pool-logical/diskvol1")
     disk.sync_path_props()
 
     disk = guest.devices.disk[2]
-    disk.set_source_path("/dev/disk-pool/diskvol1")
+    disk.set_source_path("/dev/pool-logical/diskvol1")
     disk.sync_path_props()
 
     disk = guest.devices.disk[3]
-    disk.set_source_path("/dev/default-pool/default-vol")
+    disk.set_source_path("/pool-dir/default-vol")
     disk.sync_path_props()
 
     disk = guest.devices.disk[4]
-    disk.set_source_path("/dev/disk-pool/diskvol1")
+    disk.set_source_path("/dev/pool-logical/diskvol1")
     disk.sync_path_props()
 
     _alter_compare(kvmconn, guest.get_xml(), outfile)
@@ -950,7 +951,7 @@ def testCPUUnknownClear():
     outfile = DATADIR + "%s-out.xml" % basename
     guest = virtinst.Guest(kvmconn, parsexml=open(infile).read())
 
-    guest.cpu.copy_host_cpu(guest)
+    guest.cpu.set_special_mode(guest, "host-model-only")
     guest.cpu.clear()
     utils.diff_compare(guest.get_xml(), outfile)
 
@@ -1028,11 +1029,11 @@ def testXMLBuilderCoverage():
     xml = conn.lookupByName("test-for-virtxml").XMLDesc(0)
     guest = virtinst.Guest(conn, parsexml=xml)
 
-    assert guest.features.get_xml().startswith("<features")
-    assert guest.clock.get_xml().startswith("<clock")
+    assert guest.features.get_xml().startswith("  <features")
+    assert guest.clock.get_xml().startswith("  <clock")
     assert guest.seclabels[0].get_xml().startswith("<seclabel")
-    assert guest.cpu.get_xml().startswith("<cpu")
-    assert guest.os.get_xml().startswith("<os")
+    assert guest.cpu.get_xml().startswith("  <cpu")
+    assert guest.os.get_xml().startswith("  <os")
     assert guest.cpu.get_xml_id() == "./cpu"
     assert guest.cpu.get_xml_idx() == 0
     assert guest.get_xml_id() == "."
@@ -1134,3 +1135,38 @@ def testControllerAttachedDevices():
 
     # Little test for DeviceAddress.pretty_desc
     assert devs[-1].address.pretty_desc() == "0:0:0:3"
+
+
+def testRefreshMachineType():
+    guest = virtinst.Guest(utils.URIs.openconn(utils.URIs.kvm_x86))
+    guest.os.machine = "pc-i440fx-5.2"
+    guest.refresh_machine_type()
+    assert guest.os.machine == "pc"
+
+    guest = virtinst.Guest(utils.URIs.openconn(utils.URIs.kvm_x86))
+    guest.os.machine = "pc-q35-XYZ"
+    guest.refresh_machine_type()
+    assert guest.os.machine == "q35"
+
+    guest = virtinst.Guest(utils.URIs.openconn(utils.URIs.kvm_s390x))
+    guest.os.machine = "s390-ccw-virtio-12345"
+    guest.refresh_machine_type()
+    assert guest.os.machine == "s390-ccw-virtio"
+
+
+def testDiskSourceAbspath():
+    # If an existing disk doesn't have an abspath in the XML, make sure
+    # we don't convert it just by parsing
+    conn = utils.URIs.open_testdefault_cached()
+    xml = "<disk type='file' device='disk'><source file='foobar'/></disk>"
+    disk = virtinst.DeviceDisk(conn, parsexml=xml)
+    assert disk.get_source_path() == "foobar"
+
+    # But setting a relative path should convert it
+    import os
+    disk.set_source_path("foobar2")
+    assert disk.get_source_path() == os.path.abspath("foobar2")
+
+    # ...unless it's a URL
+    disk.set_source_path("http://example.com/foobar3")
+    assert disk.get_source_path() == "http://example.com/foobar3"

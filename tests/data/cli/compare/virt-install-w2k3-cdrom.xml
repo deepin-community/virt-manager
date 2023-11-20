@@ -23,10 +23,9 @@
     </hyperv>
   </features>
   <cpu>
-    <topology sockets="1" cores="4" threads="1"/>
+    <topology sockets="1" dies="1" cores="4" threads="1"/>
   </cpu>
   <clock offset="localtime"/>
-  <on_reboot>destroy</on_reboot>
   <pm>
     <suspend-to-mem enabled="no"/>
     <suspend-to-disk enabled="no"/>
@@ -34,11 +33,11 @@
   <devices>
     <emulator>/usr/bin/test-hv</emulator>
     <disk type="file" device="disk">
-      <source file="/dev/default-pool/testvol1.img"/>
+      <source file="/pool-dir/testvol1.img"/>
       <target dev="hda" bus="ide"/>
     </disk>
     <disk type="file" device="cdrom">
-      <source file="/dev/default-pool/testvol2.img"/>
+      <source file="/pool-dir/testvol2.img"/>
       <target dev="hdb" bus="ide"/>
       <readonly/>
     </disk>
@@ -49,6 +48,7 @@
     </interface>
     <console type="pty"/>
   </devices>
+  <on_reboot>destroy</on_reboot>
 </domain>
 <domain type="test">
   <name>win2k3</name>
@@ -74,7 +74,7 @@
     </hyperv>
   </features>
   <cpu>
-    <topology sockets="1" cores="4" threads="1"/>
+    <topology sockets="1" dies="1" cores="4" threads="1"/>
   </cpu>
   <clock offset="localtime"/>
   <pm>
@@ -84,11 +84,11 @@
   <devices>
     <emulator>/usr/bin/test-hv</emulator>
     <disk type="file" device="disk">
-      <source file="/dev/default-pool/testvol1.img"/>
+      <source file="/pool-dir/testvol1.img"/>
       <target dev="hda" bus="ide"/>
     </disk>
     <disk type="file" device="cdrom">
-      <source file="/dev/default-pool/testvol2.img"/>
+      <source file="/pool-dir/testvol2.img"/>
       <target dev="hdb" bus="ide"/>
       <readonly/>
     </disk>

@@ -1,8 +1,74 @@
-virt-manager (1:3.2.0-3) UNRELEASED; urgency=medium
+virt-manager (1:4.1.0-2) unstable; urgency=medium
 
-  * update
+  [ Stefano Rivera ]
+  * Explicitly specify --install-layout=deb in the Python module installation;
+    fixes compatibility with Python 3.10 in Debian. (Closes: #1022339)
 
- -- Debian Libvirt Maintainers <pkg-libvirt-maintainers@lists.alioth.debian.org>  Thu, 26 May 2022 17:50:58 +0800
+  [ Pino Toscano ]
+  * Use dh-sequence-python3 B-D instead of manually using python3 dh addon.
+
+ -- Pino Toscano <pino@debian.org>  Sun, 06 Nov 2022 13:09:07 +0100
+
+virt-manager (1:4.1.0-1) unstable; urgency=medium
+
+  * New upstream version 4.1.0
+  * Drop all the patches, backported from upstream
+  * Remove inactive Uploaders
+  * Drop removal of exec bits from .py files, as there are no more issues
+
+ -- Pino Toscano <pino@debian.org>  Fri, 05 Aug 2022 08:35:08 +0200
+
+virt-manager (1:4.0.0-3) unstable; urgency=medium
+
+  [ Pino Toscano ]
+  * Drop the python3-dbus dependency from virt-manager, no more needed.
+    GDBus is used, instead of the Python bindings of libdbus.
+  * Update standards version to 4.6.1, no changes needed.
+
+  [ Fabio Fantoni ]
+  * d/patches: add fixes from upstream for FTBFS with libvirt 8.5
+    - tests: Fix with latest osinfo-db
+    - tests: Fix with latest argcomplete
+    - tests: Fix with latest libvirt
+    (Closes: #1013667)
+
+ -- Guido Günther <agx@sigxcpu.org>  Thu, 04 Aug 2022 13:47:17 +0200
+
+virt-manager (1:4.0.0-2) unstable; urgency=medium
+
+  [ Fabio Fantoni ]
+  * d/patches: add fixes from upstream for FTBFS with libvirt 8.1
+    (Closes: #1008358)
+
+ -- Pino Toscano <pino@debian.org>  Sun, 24 Apr 2022 11:08:12 +0200
+
+virt-manager (1:4.0.0-1) unstable; urgency=medium
+
+  * New upstream version 4.0.0:
+    - should properly support AyatanaAppIndicator3 (Closes: #990819)
+  * Update standards version to 4.6.0, no changes needed.
+  * Drop all the patches, fixed or backported from upstream
+  * Update build/runtime dependencies according to upstream:
+    - add python3-setuptools B-D
+    - replace genisoimage with xorriso (Closes: #982235)
+    - bump python3-gi to 3.31.3
+  * Remove extra exec bits from .py files in /usr/share/virt-manager
+  * Remove the forced C locale during tests, the issue was fixed upstream
+
+ -- Pino Toscano <pino@debian.org>  Tue, 08 Mar 2022 07:44:37 +0100
+
+virt-manager (1:3.2.0-3.1) unstable; urgency=medium
+
+  * Non-maintainer upload
+  * d/patches: add some fixes from upstream
+    - virtinst: Fix TOCTOU in domain enumeration
+    - tests: storage: Fix with latest libvirt XML output
+    - tests: use different USB device when testing hot-add
+    - tests: don't add the same USB devices to the guest twice
+    - tests: Fix hyperv @mode handling on libvirt 8.0.0
+    (Closes: #997367)
+
+ -- Fabio Fantoni <fantonifabio@tiscali.it>  Tue, 01 Feb 2022 18:21:01 +0100
 
 virt-manager (1:3.2.0-3) unstable; urgency=medium
 

@@ -46,9 +46,9 @@ Many arguments have sub options, specified like opt1=foo,opt2=bar, etc. Try
 --option=? to see a complete list of sub options associated with that
 argument, example: virt-install --disk=?
 
-Most options are not required. If a suitable --os-variant value is specified
+Most options are not required. If a suitable --osinfo value is specified
 or detected, all defaults will be filled in and reported in the terminal
-output. If an --os-variant is not specified. minimum required options, --memory,
+output. Otherwise, minimum required options are --memory,
 guest storage (--disk or --filesystem), and an install method choice.
 
 
@@ -258,6 +258,24 @@ The --xml option has 4 sub options:
 
 
 
+**xpath subarguments**
+``````````````````````
+
+Similar to the ``--xml`` option, most top level options have ``xpath.*``
+suboptions. For example, ``--disk xpath1.set=./@foo=bar,xpath2.create=./newelement``
+would generate XML alterations like
+
+.. code-block::
+
+       <disk foo="bar">
+         <newelements/>
+       </disk>
+
+This is useful for setting XML options per device, when virt-install does not
+support those options yet.
+
+
+
 ``--qemu-commandline``
 ^^^^^^^^^^^^^^^^^^^^^^
 
@@ -289,9 +307,11 @@ Number of virtual cpus to configure for the guest. If 'maxvcpus' is specified,
 the guest will be able to hotplug up to MAX vcpus while the guest is running,
 but will startup with VCPUS.
 
-CPU topology can additionally be specified with sockets, cores, and threads.
-If values are omitted, the rest will be autofilled preferring sockets over
-cores over threads.
+CPU topology can additionally be specified with sockets, dies, cores, and threads.
+If values are omitted, the rest will be autofilled preferring cores over sockets
+over threads. Cores are preferred because this matches the characteristics of
+modern real world silicon and thus a better fit for what guest OS will be
+expecting to deal with.
 
 'cpuset' sets which physical cpus the guest can use. ``CPUSET`` is a comma
 separated list of numbers, which can also be specified in ranges or cpus
@@ -490,7 +510,7 @@ apic, eoi, privnet, and hyperv features. Some examples:
     Enable APIC PV EOI
 
 ``--features hyperv.vapic.state=on,hyperv.spinlocks.state=off``
-    Enable hypver VAPIC, but disable spinlocks
+    Enable hyperv VAPIC, but disable spinlocks
 
 ``--features kvm.hidden.state=on``
     Allow the KVM hypervisor signature to be hidden from the guest
@@ -589,7 +609,7 @@ INSTALLATION OPTIONS
 **Syntax:** ``--cdrom`` PATH
 
 ISO file or CDROM device to use for VM install media. After install,
-the the virtual CDROM device will remain attached to the VM, but with
+the virtual CDROM device will remain attached to the VM, but with
 the ISO or host path media ejected.
 
 
@@ -617,7 +637,7 @@ ftp://host/path
     An FTP server location containing an installable distribution image.
 
 ISO
-    Probe the ISO and extract files using 'isoinfo'
+    Extract files directly from the ISO path
 
 DIRECTORY
     Path to a local directory containing an installable distribution image.
@@ -631,7 +651,7 @@ Fedora/Red Hat Based
     https://download.fedoraproject.org/pub/fedora/linux/releases/29/Server/x86_64/os
 
 Debian
-    https://ftp.us.debian.org/debian/dists/stable/main/installer-amd64/
+    https://debian.osuosl.org/debian/dists/stable/main/installer-amd64/
 
 Ubuntu
     https://us.archive.ubuntu.com/ubuntu/dists/wily/main/installer-amd64/
@@ -874,9 +894,18 @@ Sub options are:
     Specify a cloud-init user-data file to add directly to the iso. All other
     user-data configuration options on the --cloud-init command line are ignored.
 
-``ssh-key=``
+``root-ssh-key=``
     Specify a public key to inject into the guest, providing ssh access to the
-    unprivileged account. Example: ssh-key=/home/user/.ssh/id_rsa.pub
+    root account. Example: root-ssh-key=/home/user/.ssh/id_rsa.pub
+
+``clouduser-ssh-key``
+    Specify a public key to inject into the guest, providing ssh access to
+    the default cloud-init user account. The account name is different per
+    distro cloud image. Some common ones are documented here:
+    https://docs.openstack.org/image-guide/obtain-images.html
+
+``network-config=``
+    Specify a cloud-init network-config file to add directly to the iso.
 
 
 
@@ -969,16 +998,14 @@ GUEST OS OPTIONS
 ``--os-variant``, ``--osinfo``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Syntax:** ``--os-variant`` [OS_VARIANT|OPT1=VAL1,...]
+**Syntax:** ``--osinfo`` [OSNAME|OPT1=VAL1,...]
 
-Optimize the guest configuration for a specific operating system (ex.
-'fedora29', 'rhel7', 'win10'). While not required, specifying this
-options is HIGHLY RECOMMENDED, as it can greatly increase performance
-by specifying virtio among other guest tweaks.
+Optimize the guest configuration for a specific operating system.
+For most cases, an OS must be specified or detected from the install
+media so performance critical features like virtio can be enabled.
 
-The simplest usage is ``--os-variant OS-NAME``, for example
-``--os-variant fedora32``. ``--os-variant`` supports explicit suboption
-syntax as well:
+The simplest usage is ``--os-variant OSNAME`` or ``--osinfo OSNAME``,
+for example ``--osinfo fedora32``. The supported suboptions are:
 
 ``name=``, ``short-id=``
     The OS name/short-id from libosinfo. Examples: ``fedora32``, ``win10``
@@ -998,26 +1025,32 @@ syntax as well:
 
 Some interesting examples:
 
-``--os-variant detect=on,require=on``
+``--osinfo detect=on,require=on``
     This tells virt-install to attempt detection from install media,
     but explicitly fail if that does not succeed. This will ensure
     your virt-install invocations don't fallback to a poorly performing
     config
 
-``--os-variant detect=on,name=OSNAME``
+``--osinfo detect=on,name=OSNAME``
     Attempt OS detection from install media, but if that fails, use
     OSNAME as a fallback.
 
+If any manual ``--osinfo`` value is specified, the default is
+all other settings off or unset.
 
-By default, virt-install will do ``--os-variant detect=on,name=generic``,
-using the detected OS if found, and falling back to the stub ``generic``
-value otherwise, and printing a warning.
+By default, virt-install will always attempt ``--osinfo detect=on``
+for appropriate install media. If no OS is detected, we will fail
+in most common cases. This fatal error was added in 2022. You can
+work around this by using the fallback example
+above, or disabling the ``require`` option. If you just need to get back
+to the old non-fatal behavior ASAP, set the environment variable
+VIRTINSTALL_OSINFO_DISABLE_REQUIRE=1.
 
-If any manual ``--os-variant`` value is specified, the default is
-all settings off or unset.
+Use the command ``virt-install --osinfo list`` to get the list of the
+accepted OS variants. See ``osinfo-query os`` for even more output.
 
-Use the command "osinfo-query os" to get the list of the accepted OS
-variant names.
+Note: ``--os-variant`` and ``--osinfo`` are aliases for one another.
+``--osinfo`` is the preferred new style naming.
 
 
 
@@ -1197,7 +1230,7 @@ Some example suboptions:
 
 ``accessmode`` or ``mode``
     The access mode for the source directory from the guest OS. Only used with
-    QEMU and type=mount. Valid modes are 'passthrough' (the default), 'mapped',
+    QEMU and type=mount. Valid modes are 'mapped' (the default), 'passthrough',
     or 'squash'. See libvirt domain XML documentation for more info.
 
 ``source``
@@ -1225,7 +1258,7 @@ Connect the guest to the host network. Examples for specifying the network type:
 ``bridge=BRIDGE``
     Connect to a bridge device in the host called ``BRIDGE``. Use this option if
     the host has static networking config & the guest requires full outbound
-    and inbound connectivity  to/from the LAN. Also use this if live migration
+    and inbound connectivity to/from the LAN. Also use this if live migration
     will be used with this guest.
 
 ``network=NAME``
@@ -1233,7 +1266,7 @@ Connect the guest to the host network. Examples for specifying the network type:
     can be listed, created, deleted using the ``virsh`` command line tool. In
     an unmodified install of ``libvirt`` there is usually a virtual network
     with a name of ``default``. Use a virtual network if the host has dynamic
-    networking (eg NetworkManager), or using wireless. The guest will be
+    networking (e.g. NetworkManager), or using wireless. The guest will be
     NATed to the LAN by whichever connection is active.
 
 ``type=direct,source=IFACE[,source.mode=MODE]``
@@ -1480,20 +1513,25 @@ See ``https://libvirt.org/formatdomain.html#elementsAddress`` for details.
 
 **Syntax:** ``--controller`` OPTIONS
 
-Attach a controller device to the guest. TYPE is one of:
-``ide``, ``fdc``, ``scsi``, ``sata``, ``virtio-serial``, or ``usb`` .
+Attach a controller device to the guest.
 
-Controller also supports the special values ``usb2`` and ``usb3`` to
-specify which version of the USB controller should be used (version 2
-or 3).
+Some example invocations:
 
-Some example suboptions:
+``--controller usb2``
+    Add a full USB2 controller setup
 
-``model``
-    Controller model.  These may vary according to the hypervisor and its
-    version.  Most commonly used models are e.g. ``auto`` , ``virtio-scsi``
-    for the ``scsi`` controller, ``ehci`` or ``none``for the ``usb``
-    controller.
+``--controller usb3``
+    Add a USB3 controller
+
+``--controller type=usb,model=none``
+    Disable USB entirely
+
+``--controller type=scsi,model=virtio-scsi``
+    Add a VirtIO SCSI controller
+
+``--controller num_pcie_root_ports=NUM``
+    Control the number of default ``pcie-root-port`` controller devices
+    we add to the new VM by default, if the VM will use PCIe by default.
 
 Use --controller=? to see a list of all available sub options.
 Complete details at https://libvirt.org/formatdomain.html#elementsControllers
@@ -1558,6 +1596,16 @@ OS supports.
 This deprecates the old --soundhw option.
 Use --sound=? to see a list of all available sub options.
 Complete details at https://libvirt.org/formatdomain.html#elementsSound
+
+
+
+``--audio``
+^^^^^^^^^^^
+
+Configure host audio output for the guest's `--sound` hardware.
+
+Use --audio=? to see a list of all available sub options.
+Complete details at https://libvirt.org/formatdomain.html#audio-backends
 
 
 
@@ -1713,6 +1761,15 @@ Some of the types of character device redirection are:
     and can be any string, such as the default com.redhat.spice.0 that
     specifies how the guest will see the channel.
 
+``--channel qemu-vdagent,target.type=virtio[,target.name=NAME]``
+    Communication channel for QEMU vd agent, using virtio serial (requires
+    2.6.34 or later host and guest). This allows copy/paste functionality with
+    VNC guests. Note that the guest clipboard integration is implemented via
+    spice-vdagent, which must be running even when the guest does not use spice
+    graphics. NAME is optional metadata that specifies how the guest will see
+    the channel, and should be left as the default com.redhat.spice.0 unless you
+    know what you are doing.
+
 
 Use --channel=? to see a list of all available sub options.
 Complete details at https://libvirt.org/formatdomain.html#elementsCharChannel
@@ -1842,6 +1899,9 @@ Configure a virtual TPM device. Examples:
 ``--tpm emulator``
     Request an emulated TPM device.
 
+``--tpm default``
+    Request virt-install to fill in a modern recommended default
+
 Use --tpm=? to see a list of all available sub options.
 Complete details at https://libvirt.org/formatdomain.html#elementsTpm
 
@@ -1883,6 +1943,19 @@ For the recommended settings, use: ``--panic default``
 
 Use --panic=? to see a list of all available sub options.
 Complete details at https://libvirt.org/formatdomain.html#elementsPanic
+
+
+
+``--shmem``
+^^^^^^^^^^^
+
+**Syntax:** ``--shmem`` NAME[,OPTS]
+
+Attach a shared memory device to the guest. The name must not contain ``/`` and must
+not be directory-specific to ``.`` or ``..``
+
+Use --shmem=? to see a list of all available sub options.
+Complete details at https://libvirt.org/formatdomain.html#shared-memory-device
 
 
 
@@ -2082,7 +2155,7 @@ instance:
        --name my-win10-vm \
        --memory 4096 \
        --disk size=40 \
-       --os-variant win10 \
+       --osinfo win10 \
        --cdrom /path/to/my/win10.iso
 
 
@@ -2098,7 +2171,7 @@ of the default SPICE, and request 8 virtual CPUs and 8192 MiB of memory:
         --memory 8192 \
         --vcpus 8 \
         --graphics vnc \
-        --os-variant centos7.0 \
+        --osinfo centos7.0 \
         --location http://mirror.centos.org/centos-7/7/os/x86_64/
 
 
@@ -2111,7 +2184,7 @@ Create a VM around an existing debian9 disk image:
         --import \
         --memory 512 \
         --disk /home/user/VMs/my-debian9.img \
-        --os-variant debian9
+        --osinfo debian9
 
 
 

@@ -1,5 +1,32 @@
 # Virtual Machine Manager News
 
+## Release 4.1.0 (August 04, 2022)
+- Fix build with setuptools-61 (Peter Alfredsen, Miro Hrončok)
+- add UI and cli support for qemu-vdagent channel (Jonathon Jongsma)
+- cli: More --iothreads suboptions (Lin Ma)
+- launch_security: Use SEV-ES policy=0x07 if host supports it (Charles
+  Arnold)
+- cli: Add support for URL query with disks (Martin Kletzander)
+
+## Release 4.0.0 (March 02, 2022)
+- virt-install --os-variant/--osinfo is now a hard requirement for most
+  cases
+- Add 'Enable shared memory' UI checkbox (Lin Ma)
+- add UI preference to default to UEFI for new VMs (Charles Arnold)
+- Add virtiofs filesystem driver UI option
+- Fill in all --cputune, --cpu, --shmem, --input, and --boot suboptions
+  (Hugues Fafard)
+- virt-* mdev improvements (Shalini Chellathurai Saroja)
+- bhyve improvments (Roman Bogorodskiy)
+- Revive network portgroup UI
+- enable a TPM by default when UEFI is used (Daniel P. Berrangé)
+- Use cpu host-passthrough by default on qemu x86
+- use virtio-gpu video for most modern distros
+- Default to extra pcie root ports for q35
+- set discard=unmap by default for sparse disks and block devices
+- We now require xorissofs for --location ISO
+- We now use setuptools rather than just plain distutils
+
 ## Release 3.2.0 (November 14, 2020)
 - Slim down filesystem device editor UI
 - Fix TOCTTOU virt-install bugs (Martin Pitt)
@@ -232,7 +259,7 @@
 - OVMF/AAVMF Support (Laszlo Ersek, Giuseppe Scrivano, Cole Robinson)
 - Improved support for AArch64 qemu/kvm
 - virt-install: Support `--disk type=network` parameters
-- virt-install: Make `--disk`  just work
+- virt-install: Make `--disk` just work
 - virt-install: Add `--disk sgio=` option (Giuseppe Scrivano)
 - addhardware: default to an existing bus when adding a new disk
   (Giuseppe Scrivano)
@@ -353,7 +380,7 @@
 
 - Allow renaming an offline VM
 - Spice password support (Marc-André Lureau)
-- Allow editting NIC `<virtualport>` settings (Gerhard Stenzel)
+- Allow editing NIC `<virtualport>` settings (Gerhard Stenzel)
 - Allow enabling/disabling individual CPU features
 - Allow easily changing graphics type between VNC and SPICE for existing
   VM
@@ -517,7 +544,7 @@ now tunnel connections to the VNC server over SSH. It avoids prompting
 for SSH passwords on the console. Handling of VNC connections & retries
 is made more robust. There is support for changing CDROM media on the
 fly (requires suitably updated libvirt). There is ability to PXE boot
-install fullyvirtualized guests. Connetions to hypervisors are opened
+install fullyvirtualized guests. Connections to hypervisors are opened
 in the background to avoid blocking the whole UI.
 
 ## Release 0.5.0
@@ -525,7 +552,7 @@ in the background to avoid blocking the whole UI.
 This release introduces the ability to manage multiple remote machines,
 using either SSH+public keys, or TLS+x509 certificates to connect and
 authenticate. The main user interface is re-worked to show multiple
-hosts in a tree view, remebering connections across restarts. It is
+hosts in a tree view, remembering connections across restarts. It is
 not currently possible to create new guests with a remote host connection.
 This capability will be added in a future release. The guest VNC console
 implementation has been replaced with the GTK-VNC widget for greatly
@@ -552,7 +579,7 @@ to the hypervisor.
 The release introduces online help for all windows / dialogs in the
 application, to explain usage & operation of key functions. Auto-popup
 of consoles was fixed for existing inactive domains. Additional control
-operations are available on the right-click menu in the VM list. A 
+operations are available on the right-click menu in the VM list. A
 handful of other minor bug fixes are also applied.
 
 ## Release 0.3.1
@@ -590,8 +617,8 @@ the UI in approximately 20 languages - thanks to the Fedora i18n
 team for excellent progress on this. It is now possible to control
 the virt-manager UI with command line arguments as well as the DBus
 API & it DBus activation is no longer used by default which fixes
-interaction with GNOME keyring & AT-SPI accesibility. Numerous
-UI issues were fixed / clarified, particularly in the graphical 
+interaction with GNOME keyring & AT-SPI accessibility. Numerous
+UI issues were fixed / clarified, particularly in the graphical
 console and new VM creation wizard.
 
 

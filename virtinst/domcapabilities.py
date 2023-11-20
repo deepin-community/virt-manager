@@ -31,6 +31,9 @@ class _HasValues(XMLBuilder):
     def get_values(self):
         return [v.value for v in self.values]
 
+    def has_value(self, val):
+        return val in self.get_values()
+
 
 class _Enum(_HasValues):
     XML_NAME = "enum"
@@ -39,10 +42,18 @@ class _Enum(_HasValues):
 
 class _CapsBlock(_HasValues):
     supported = XMLProperty("./@supported", is_yesno=True)
+    _supported_present = XMLProperty("./@supported")
     enums = XMLChildProperty(_Enum)
+
+    @property
+    def present(self):
+        return self._supported_present is not None
 
     def enum_names(self):
         return [e.name for e in self.enums]
+
+    def has_enum(self, name):
+        return name in self.enum_names()
 
     def get_enum(self, name):
         for enum in self.enums:
@@ -82,8 +93,7 @@ def _make_capsblock(xml_root_name):
 class _SEV(XMLBuilder):
     XML_NAME = "sev"
     supported = XMLProperty("./@supported", is_yesno=True)
-    cbitpos = XMLProperty("./cbitpos", is_int=True)
-    reducedPhysBits = XMLProperty("./reducedPhysBits", is_int=True)
+    maxESGuests = XMLProperty("./maxESGuests")
 
 
 #############################
@@ -100,12 +110,19 @@ class _Devices(_CapsBlock):
     hostdev = XMLChildProperty(_make_capsblock("hostdev"), is_single=True)
     disk = XMLChildProperty(_make_capsblock("disk"), is_single=True)
     video = XMLChildProperty(_make_capsblock("video"), is_single=True)
+    graphics = XMLChildProperty(_make_capsblock("graphics"), is_single=True)
+    tpm = XMLChildProperty(_make_capsblock("tpm"), is_single=True)
+    filesystem = XMLChildProperty(_make_capsblock("filesystem"), is_single=True)
 
 
 class _Features(_CapsBlock):
     XML_NAME = "features"
     gic = XMLChildProperty(_make_capsblock("gic"), is_single=True)
     sev = XMLChildProperty(_SEV, is_single=True)
+
+
+class _MemoryBacking(_CapsBlock):
+    XML_NAME = "memoryBacking"
 
 
 ###############
@@ -119,25 +136,15 @@ class _CPUModel(XMLBuilder):
     fallback = XMLProperty("./@fallback")
 
 
-class _CPUFeature(XMLBuilder):
-    XML_NAME = "feature"
-    name = XMLProperty("./@name")
-    policy = XMLProperty("./@policy")
-
-
-class _CPUMode(XMLBuilder):
+class _CPUMode(_CapsBlock):
     XML_NAME = "mode"
     name = XMLProperty("./@name")
-    supported = XMLProperty("./@supported", is_yesno=True)
-    vendor = XMLProperty("./vendor")
 
     models = XMLChildProperty(_CPUModel)
     def get_model(self, name):
         for model in self.models:
             if model.model == name:
                 return model
-
-    features = XMLChildProperty(_CPUFeature)
 
 
 class _CPU(XMLBuilder):
@@ -150,11 +157,84 @@ class _CPU(XMLBuilder):
                 return mode
 
 
+#############################
+# CPU flags/baseline helpers#
+#############################
+
+def _convert_mode_to_cpu(xml, arch):
+    root = ET.fromstring(xml)
+    root.tag = "cpu"
+    root.attrib = {}
+    aelement = ET.SubElement(root, "arch")
+    aelement.text = arch
+    return ET.tostring(root, encoding="unicode")
+
+
+def _get_expanded_cpu(domcaps, mode):
+    cpuXML = _convert_mode_to_cpu(mode.get_xml(), domcaps.arch)
+    log.debug("Generated CPU XML for security flag baseline:\n%s", cpuXML)
+
+    try:
+        expandedXML = domcaps.conn.baselineHypervisorCPU(
+                domcaps.path, domcaps.arch,
+                domcaps.machine, domcaps.domain, [cpuXML],
+                libvirt.VIR_CONNECT_BASELINE_CPU_EXPAND_FEATURES)
+    except (libvirt.libvirtError, AttributeError):
+        expandedXML = domcaps.conn.baselineCPU([cpuXML],
+                libvirt.VIR_CONNECT_BASELINE_CPU_EXPAND_FEATURES)
+
+    return DomainCpu(domcaps.conn, expandedXML)
+
+
+def _lookup_cpu_security_features(domcaps):
+    ret = []
+    sec_features = [
+            'spec-ctrl',
+            'ssbd',
+            'ibpb',
+            'virt-ssbd',
+            'md-clear']
+
+    for m in domcaps.cpu.modes:
+        if m.name != "host-model" or not m.supported:
+            continue  # pragma: no cover
+
+        try:
+            cpu = _get_expanded_cpu(domcaps, m)
+        except libvirt.libvirtError as e:  # pragma: no cover
+            log.warning(_("Failed to get expanded CPU XML: %s"), e)
+            break
+
+        for feature in cpu.features:
+            if feature.name in sec_features:
+                ret.append(feature.name)
+
+    log.debug("Found host-model security features: %s", ret)
+    return ret
+
+
 #################################
 # DomainCapabilities main class #
 #################################
 
 class DomainCapabilities(XMLBuilder):
+    XML_NAME = "domainCapabilities"
+    os = XMLChildProperty(_OS, is_single=True)
+    cpu = XMLChildProperty(_CPU, is_single=True)
+    devices = XMLChildProperty(_Devices, is_single=True)
+    features = XMLChildProperty(_Features, is_single=True)
+    memorybacking = XMLChildProperty(_MemoryBacking, is_single=True)
+
+    arch = XMLProperty("./arch")
+    domain = XMLProperty("./domain")
+    machine = XMLProperty("./machine")
+    path = XMLProperty("./path")
+
+
+    ################
+    # Init helpers #
+    ################
+
     @staticmethod
     def build_from_params(conn, emulator, arch, machine, hvtype):
         xml = None
@@ -162,6 +242,8 @@ class DomainCapabilities(XMLBuilder):
             try:
                 xml = conn.getDomainCapabilities(emulator, arch,
                     machine, hvtype)
+                log.debug("Fetched domain capabilities for (%s,%s,%s,%s): %s",
+                          emulator, arch, machine, hvtype, xml)
             except Exception:  # pragma: no cover
                 log.debug("Error fetching domcapabilities XML",
                     exc_info=True)
@@ -175,6 +257,11 @@ class DomainCapabilities(XMLBuilder):
     def build_from_guest(guest):
         return DomainCapabilities.build_from_params(guest.conn,
             guest.emulator, guest.os.arch, guest.os.machine, guest.type)
+
+
+    #########################
+    # UEFI/firmware methods #
+    #########################
 
     # Mapping of UEFI binary names to their associated architectures. We
     # only use this info to do things automagically for the user, it shouldn't
@@ -211,9 +298,17 @@ class DomainCapabilities(XMLBuilder):
         if not self.arch_can_uefi():
             return  # pragma: no cover
 
+        firmware_files = [f.value for f in self.os.loader.values]
+        if self.conn.is_bhyve():
+            for firmware_file in firmware_files:
+                if 'BHYVE_UEFI.fd' in firmware_file:
+                    return firmware_file
+            return (firmware_files and
+                    firmware_files[0] or None)  # pragma: no cover
+
         patterns = self._uefi_arch_patterns.get(self.arch)
         for pattern in patterns:
-            for path in [v.value for v in self.os.loader.values]:
+            for path in firmware_files:
                 if re.match(pattern, path):
                     return path
 
@@ -225,7 +320,7 @@ class DomainCapabilities(XMLBuilder):
         if not path:
             if self.arch in ["i686", "x86_64"]:
                 return _("BIOS")
-            return _("None")
+            return _("Default")
 
         for arch, patterns in self._uefi_arch_patterns.items():
             for pattern in patterns:
@@ -241,12 +336,19 @@ class DomainCapabilities(XMLBuilder):
         """
         return self.arch in list(self._uefi_arch_patterns.keys())
 
-    def supports_uefi_xml(self):
+    def supports_uefi_loader(self):
         """
-        Return True if libvirt advertises support for proper UEFI setup
+        Return True if libvirt advertises support for UEFI loader
         """
-        return ("readonly" in self.os.loader.enum_names() and
-                "yes" in self.os.loader.get_enum("readonly").get_values())
+        return self.os.loader.get_enum("readonly").has_value("yes")
+
+    def supports_firmware_efi(self):
+        return self.os.get_enum("firmware").has_value("efi")
+
+
+    #######################
+    # CPU support methods #
+    #######################
 
     def supports_safe_host_model(self):
         """
@@ -254,11 +356,20 @@ class DomainCapabilities(XMLBuilder):
         host-model in fact predates this support, however it wasn't
         general purpose safe prior to domcaps advertisement.
         """
-        for m in self.cpu.modes:
-            if (m.name == "host-model" and m.supported and
-                    m.models[0].fallback == "forbid"):
-                return True
-        return False
+        m = self.cpu.get_mode("host-model")
+        return (m and m.supported and
+                m.models[0].fallback == "forbid")
+
+    def supports_safe_host_passthrough(self):
+        """
+        Return True if host-passthrough is safe enough to use by default.
+        We limit this to domcaps new enough to report whether host-passthrough
+        is migratable or not, which also means libvirt is about new enough
+        to not taint the VM for using host-passthrough
+        """
+        m = self.cpu.get_mode("host-passthrough")
+        return (m and m.supported and
+                "on" in m.get_enum("hostPassthroughMigratable").get_values())
 
     def get_cpu_models(self):
         models = []
@@ -271,67 +382,26 @@ class DomainCapabilities(XMLBuilder):
 
         return models
 
-    def _convert_mode_to_cpu(self, xml):
-        root = ET.fromstring(xml)
-        root.tag = "cpu"
-        root.attrib = {}
-        arch = ET.SubElement(root, "arch")
-        arch.text = self.arch
-        return ET.tostring(root, encoding="unicode")
-
-    def _get_expanded_cpu(self, mode):
-        cpuXML = self._convert_mode_to_cpu(mode.get_xml())
-        log.debug("Generated CPU XML for security flag baseline:\n%s", cpuXML)
-
-        try:
-            expandedXML = self.conn.baselineHypervisorCPU(
-                    self.path, self.arch, self.machine, self.domain, [cpuXML],
-                    libvirt.VIR_CONNECT_BASELINE_CPU_EXPAND_FEATURES)
-        except (libvirt.libvirtError, AttributeError):
-            expandedXML = self.conn.baselineCPU([cpuXML],
-                    libvirt.VIR_CONNECT_BASELINE_CPU_EXPAND_FEATURES)
-
-        return DomainCpu(self.conn, expandedXML)
-
-    def _lookup_cpu_security_features(self):
-        ret = []
-        sec_features = [
-                'spec-ctrl',
-                'ssbd',
-                'ibpb',
-                'virt-ssbd',
-                'md-clear']
-
-        for m in self.cpu.modes:
-            if m.name != "host-model" or not m.supported:
-                continue  # pragma: no cover
-
-            try:
-                cpu = self._get_expanded_cpu(m)
-            except libvirt.libvirtError as e:  # pragma: no cover
-                log.warning(_("Failed to get expanded CPU XML: %s"), e)
-                break
-
-            for feature in cpu.features:
-                if feature.name in sec_features:
-                    ret.append(feature.name)
-
-        log.debug("Found host-model security features: %s", ret)
-        return ret
-
     _features = None
     def get_cpu_security_features(self):
         if self._features is None:
-            self._features = self._lookup_cpu_security_features() or []
+            self._features = _lookup_cpu_security_features(self) or []
         return self._features
 
 
-    def supports_sev_launch_security(self):
+    ########################
+    # Misc support methods #
+    ########################
+
+    def supports_sev_launch_security(self, check_es=False):
         """
         Returns False if either libvirt doesn't advertise support for SEV at
         all (< libvirt-4.5.0) or if it explicitly advertises it as unsupported
         on the platform
         """
+        if check_es:
+            return bool(self.features.sev.supported and
+                        self.features.sev.maxESGuests)
         return bool(self.features.sev.supported)
 
     def supports_video_bochs(self):
@@ -339,16 +409,54 @@ class DomainCapabilities(XMLBuilder):
         Returns False if either libvirt or qemu do not have support to bochs
         video type.
         """
-        models = self.devices.video.get_enum("modelType").get_values()
-        return bool("bochs" in models)
+        return self.devices.video.get_enum("modelType").has_value("bochs")
 
-    XML_NAME = "domainCapabilities"
-    os = XMLChildProperty(_OS, is_single=True)
-    cpu = XMLChildProperty(_CPU, is_single=True)
-    devices = XMLChildProperty(_Devices, is_single=True)
-    features = XMLChildProperty(_Features, is_single=True)
+    def supports_video_qxl(self):
+        if not self.devices.video.has_enum("modelType"):
+            # qxl long predates modelType in domcaps, so if it is missing,
+            # use spice support as a rough value
+            return self.supports_graphics_spice()
+        return self.devices.video.get_enum("modelType").has_value("qxl")
 
-    arch = XMLProperty("./arch")
-    domain = XMLProperty("./domain")
-    machine = XMLProperty("./machine")
-    path = XMLProperty("./path")
+    def supports_video_virtio(self):
+        return self.devices.video.get_enum("modelType").has_value("virtio")
+
+    def supports_tpm_emulator(self):
+        """
+        Returns False if either libvirt or qemu do not have support for
+        emulating a TPM.
+        """
+        models = self.devices.tpm.get_enum("model").get_values()
+        backends = self.devices.tpm.get_enum("backendModel").get_values()
+
+        if self.arch == "armv7l" and models == ["tpm-tis"]:
+            # libvirt as of 8.4.0 can advertise armv7l tpm-tis support,
+            # but then explicitly rejects that config. If we see it,
+            # assume TPM is not supported
+            # https://gitlab.com/libvirt/libvirt/-/issues/329
+            return False
+
+        return len(models) > 0 and bool("emulator" in backends)
+
+    def supports_graphics_spice(self):
+        if not self.devices.graphics.supported:
+            # domcaps is too old, or the driver doesn't advertise graphics
+            # support. Use our pre-existing logic
+            if not self.conn.is_qemu() and not self.conn.is_test():
+                return False
+            return self.conn.caps.host.cpu.arch in ["i686", "x86_64"]
+
+        return self.devices.graphics.get_enum("type").has_value("spice")
+
+    def supports_filesystem_virtiofs(self):
+        """
+        Return True if libvirt advertises support for virtiofs
+        """
+        return self.devices.filesystem.get_enum(
+                "driverType").has_value("virtiofs")
+
+    def supports_memorybacking_memfd(self):
+        """
+        Return True if libvirt advertises support for memfd memory backend
+        """
+        return self.memorybacking.get_enum("sourceType").has_value("memfd")

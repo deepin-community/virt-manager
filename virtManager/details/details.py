@@ -4,8 +4,6 @@
 # This work is licensed under the GNU GPLv2 or later.
 # See the COPYING file in the top-level directory.
 
-import re
-
 from gi.repository import Gtk
 
 import libvirt
@@ -21,6 +19,7 @@ from ..device.fsdetails import vmmFSDetails
 from ..device.gfxdetails import vmmGraphicsDetails
 from ..device.mediacombo import vmmMediaCombo
 from ..device.netlist import vmmNetworkList
+from ..device.tpmdetails import vmmTPMDetails
 from ..device.vsockdetails import vmmVsockDetails
 from ..lib.graphwidgets import Sparkline
 from ..oslist import vmmOSList
@@ -45,6 +44,7 @@ from ..delete import vmmDeleteStorage
  EDIT_TOPOLOGY,
 
  EDIT_MEM,
+ EDIT_MEM_SHARED,
 
  EDIT_AUTOSTART,
  EDIT_BOOTORDER,
@@ -75,8 +75,7 @@ from ..delete import vmmDeleteStorage
 
  EDIT_CONTROLLER_MODEL,
 
- EDIT_TPM_TYPE,
- EDIT_TPM_MODEL,
+ EDIT_TPM,
 
  EDIT_VSOCK_AUTO,
  EDIT_VSOCK_CID,
@@ -206,10 +205,12 @@ def _label_for_device(dev, disk_bus_index):
         return _("Console %(num)d") % {"num": port + 1}
 
     if devtype == "channel":
-        name = vmmAddHardware.char_pretty_channel_name(dev.target_name)
-        if name:
-            return _("Channel %(name)s") % {"name": name}
         pretty_type = vmmAddHardware.char_pretty_type(dev.type)
+        name = vmmAddHardware.char_pretty_channel_name(dev.target_name)
+        # Don't print channel name with qemu-vdagent, to avoid ambiguity
+        # with the typical spice agent channel
+        if name and dev.type != "qemu-vdagent":
+            return _("Channel (%(name)s)") % {"type": pretty_type, "name": name}
         return _("Channel %(type)s") % {"type": pretty_type}
 
     if devtype == "graphics":
@@ -317,33 +318,6 @@ def _get_performance_icon_name():
     return icon
 
 
-def _unindent_device_xml(xml):
-    """
-    The device parsed from a domain will have no indent
-    for the first line, but then <domain> expected indent
-    from the remaining lines. Try to unindent the remaining
-    lines so it looks nice in the XML editor.
-    """
-    lines = xml.splitlines()
-    if not xml.startswith("<") or len(lines) < 2:
-        return xml
-
-    ret = ""
-    unindent = 0
-    for c in lines[1]:
-        if c != " ":
-            break
-        unindent += 1
-
-    unindent = max(0, unindent - 2)
-    ret = lines[0] + "\n"
-    for line in lines[1:]:
-        if re.match(r"^%s *<.*$" % (unindent * " "), line):
-            line = line[unindent:]
-        ret += line + "\n"
-    return ret
-
-
 class vmmDetails(vmmGObjectUI):
     def __init__(self, vm, builder, topwin, is_customize_dialog):
         vmmGObjectUI.__init__(self, "details.ui",
@@ -383,6 +357,10 @@ class vmmDetails(vmmGObjectUI):
         self.widget("network-source-label-align").add(self.netlist.top_label)
         self.widget("network-source-ui-align").add(self.netlist.top_box)
         self.netlist.connect("changed", _e(EDIT_NET_SOURCE))
+
+        self.tpmdetails = vmmTPMDetails(self.vm, self.builder, self.topwin)
+        self.widget("tpm-align").add(self.tpmdetails.top_box)
+        self.tpmdetails.connect("changed", _e(EDIT_TPM))
 
         self.vsockdetails = vmmVsockDetails(self.vm, self.builder, self.topwin)
         self.widget("vsock-align").add(self.vsockdetails.top_box)
@@ -439,6 +417,7 @@ class vmmDetails(vmmGObjectUI):
             "on_cpu_topology_enable_toggled": self._cpu_topology_enable_cb,
             "on_mem_maxmem_changed": _e(EDIT_MEM),
             "on_mem_memory_changed": self._curmem_changed_cb,
+            "on_mem_shared_access_toggled": _e(EDIT_MEM_SHARED),
 
             "on_boot_list_changed": self._boot_list_changed_cb,
             "on_boot_moveup_clicked": self._boot_moveup_clicked_cb,
@@ -477,7 +456,6 @@ class vmmDetails(vmmGObjectUI):
 
             "on_hostdev_rombar_toggled": _e(EDIT_HOSTDEV_ROMBAR),
             "on_controller_model_combo_changed": _e(EDIT_CONTROLLER_MODEL),
-            "on_tpm_model_combo_changed": _e(EDIT_TPM_MODEL),
 
             "on_config_apply_clicked": self._config_apply_clicked_cb,
             "on_config_cancel_clicked": self._config_cancel_clicked_cb,
@@ -537,21 +515,13 @@ class vmmDetails(vmmGObjectUI):
         # Add HW popup menu
         self._popupmenu = Gtk.Menu()
 
-        addHW = Gtk.ImageMenuItem.new_with_label(_("_Add Hardware"))
-        addHW.set_use_underline(True)
-        addHWImg = Gtk.Image()
-        addHWImg.set_from_stock(Gtk.STOCK_ADD, Gtk.IconSize.MENU)
-        addHW.set_image(addHWImg)
+        addHW = Gtk.MenuItem.new_with_mnemonic(_("_Add Hardware"))
         addHW.show()
         def _addhw_clicked_cb(*args, **kwargs):
             self._show_addhw()
         addHW.connect("activate", _addhw_clicked_cb)
 
-        rmHW = Gtk.ImageMenuItem.new_with_label(_("_Remove Hardware"))
-        rmHW.set_use_underline(True)
-        rmHWImg = Gtk.Image()
-        rmHWImg.set_from_stock(Gtk.STOCK_REMOVE, Gtk.IconSize.MENU)
-        rmHW.set_image(rmHWImg)
+        rmHW = Gtk.MenuItem.new_with_mnemonic(_("_Remove Hardware"))
         rmHW.show()
         def _remove_clicked_cb(*args, **kwargs):
             self._config_remove()
@@ -567,6 +537,7 @@ class vmmDetails(vmmGObjectUI):
     def _init_graphs(self):
         def _make_graph():
             g = Sparkline()
+            g.set_hexpand(True)
             g.set_property("reversed", True)
             g.show()
             return g
@@ -653,10 +624,11 @@ class vmmDetails(vmmGObjectUI):
         self.widget("machine-type-label").set_visible(
             not self.is_customize_dialog)
 
+
         # Firmware
         combo = self.widget("overview-firmware")
-        # [label, path, is_sensitive]
-        model = Gtk.ListStore(str, str, bool)
+        # [label, loader path, is_sensitive, ./os/@firmware value]
+        model = Gtk.ListStore(str, str, bool, str)
         combo.set_model(model)
         text = Gtk.CellRendererText()
         combo.pack_start(text, True)
@@ -666,37 +638,41 @@ class vmmDetails(vmmGObjectUI):
         domcaps = self.vm.get_domain_capabilities()
         uefipaths = [v.value for v in domcaps.os.loader.values]
 
-        warn_icon = self.widget("overview-firmware-warn")
-        hv_supports_uefi = domcaps.supports_uefi_xml()
+        uefirows = []
+        if domcaps.supports_firmware_efi():
+            uefirows.append([_("UEFI"), None, True, "efi"])
+        for path in uefipaths:
+            uefirows.append(
+                [domcaps.label_for_firmware_path(path), path, True, None])
+
+        hv_supports_uefi = (domcaps.supports_uefi_loader() or
+                domcaps.supports_firmware_efi())
+
+        firmware_warn = None
         if not hv_supports_uefi:
-            warn_icon.set_tooltip_text(
-                _("Libvirt or hypervisor does not support UEFI."))
-        elif not uefipaths:
-            warn_icon.set_tooltip_text(  # pragma: no cover
+            firmware_warn = _("Libvirt or hypervisor does not support UEFI.")
+        elif not uefirows:
+            firmware_warn = (  # pragma: no cover
                 _("Libvirt did not detect any UEFI/OVMF firmware image "
                   "installed on the host."))
 
-        model.append([domcaps.label_for_firmware_path(None), None, True])
-        if not uefipaths:
-            model.append([_("UEFI not found"), None, False])
-        else:
-            for path in uefipaths:
-                model.append([domcaps.label_for_firmware_path(path),
-                    path, True])
-
+        # Put the default entry first in the list
+        model.append([domcaps.label_for_firmware_path(None), None, True, None])
+        for row in uefirows:
+            model.append(row)
         combo.set_active(0)
 
         self.widget("overview-firmware-warn").set_visible(
-            not (uefipaths and hv_supports_uefi) and self.is_customize_dialog)
+            self.is_customize_dialog and firmware_warn)
+        self.widget("overview-firmware-warn").set_tooltip_text(firmware_warn)
         self.widget("overview-firmware").set_visible(self.is_customize_dialog)
         self.widget("overview-firmware-label").set_visible(
             not self.is_customize_dialog)
-        show_firmware = ((self.conn.is_qemu() or
-                          self.conn.is_test() or
-                          self.conn.is_xen()) and
-                         domcaps.arch_can_uefi())
         uiutil.set_grid_row_visible(
-            self.widget("overview-firmware-title"), show_firmware)
+            self.widget("overview-firmware-title"),
+            self.vm.xmlobj.os.is_hvm() and
+            (domcaps.supports_firmware_efi() or
+             domcaps.arch_can_uefi()))
 
         # Chipset
         combo = self.widget("overview-chipset")
@@ -842,10 +818,6 @@ class vmmDetails(vmmGObjectUI):
         sc_mode = self.widget("smartcard-mode")
         vmmAddHardware.build_smartcard_mode_combo(self.vm, sc_mode)
 
-        # TPM model
-        tpm_model = self.widget("tpm-model")
-        vmmAddHardware.build_tpm_model_combo(self.vm, tpm_model, None)
-
         # Controller model
         combo = self.widget("controller-model")
         model = Gtk.ListStore(str, str)
@@ -921,6 +893,7 @@ class vmmDetails(vmmGObjectUI):
         if not self.widget("config-apply").get_sensitive():
             return False
 
+        log.debug("Unapplied changes active_edits=%s", self._active_edits)
         if not self.err.confirm_unapplied_changes():
             return False
 
@@ -1078,7 +1051,7 @@ class vmmDetails(vmmGObjectUI):
         text = cpu_list.get_child().get_text()
 
         if self.widget("cpu-copy-host").get_active():
-            return virtinst.DomainCpu.SPECIAL_MODE_HOST_MODEL
+            return virtinst.DomainCpu.SPECIAL_MODE_HOST_PASSTHROUGH
 
         key = None
         for row in cpu_list.get_model():
@@ -1399,6 +1372,8 @@ class vmmDetails(vmmGObjectUI):
         if self._edited(EDIT_FIRMWARE):
             kwargs["loader"] = uiutil.get_list_selection(
                 self.widget("overview-firmware"), column=1)
+            kwargs["firmware"] = uiutil.get_list_selection(
+                self.widget("overview-firmware"), column=3)
 
         if self._edited(EDIT_MACHTYPE):
             if self.widget("overview-chipset").is_visible():
@@ -1469,6 +1444,9 @@ class vmmDetails(vmmGObjectUI):
             kwargs["maxmem"] = maxmem
             hotplug_args["memory"] = kwargs["memory"]
             hotplug_args["maxmem"] = kwargs["maxmem"]
+
+        if self._edited(EDIT_MEM_SHARED):
+            kwargs["mem_shared"] = self.widget("shared-memory").get_active()
 
         return self._change_config(
                 self.vm.define_memory, kwargs,
@@ -1575,7 +1553,8 @@ class vmmDetails(vmmGObjectUI):
             kwargs["model"] = model
 
         if self._edited(EDIT_NET_SOURCE):
-            (kwargs["ntype"], kwargs["source"], kwargs["mode"]) = (
+            (kwargs["ntype"], kwargs["source"],
+             kwargs["mode"], kwargs["portgroup"]) = (
                 self.netlist.get_network_selection())
 
         if self._edited(EDIT_NET_MAC):
@@ -1656,9 +1635,8 @@ class vmmDetails(vmmGObjectUI):
     def _apply_tpm(self, devobj):
         kwargs = {}
 
-        if self._edited(EDIT_TPM_MODEL):
-            model = uiutil.get_list_selection(self.widget("tpm-model"))
-            kwargs["model"] = model
+        if self._edited(EDIT_TPM):
+            kwargs["newdev"] = self.tpmdetails.update_device(devobj)
 
         return self._change_config(
                 self.vm.define_tpm, kwargs, devobj=devobj)
@@ -1694,7 +1672,8 @@ class vmmDetails(vmmGObjectUI):
         try:
             dev = row[HW_LIST_COL_DEVICE]
             if dev:
-                self._xmleditor.set_xml(_unindent_device_xml(dev.get_xml()))
+                self._xmleditor.set_xml(
+                        virtinst.xmlutil.unindent_device_xml(dev.get_xml()))
             else:
                 self._xmleditor.set_xml_from_libvirtobject(self.vm)
 
@@ -1774,7 +1753,7 @@ class vmmDetails(vmmGObjectUI):
         # Firmware
         domcaps = self.vm.get_domain_capabilities()
         if self.vm.get_xmlobj().os.firmware == "efi":
-            firmware = 'UEFI'
+            firmware = _("UEFI")
         else:
             firmware = domcaps.label_for_firmware_path(
                 self.vm.get_xmlobj().os.loader)
@@ -1935,9 +1914,9 @@ class vmmDetails(vmmGObjectUI):
 
         # CPU model config
         model = cpu.model or None
-        if not model:
-            if cpu.mode == "host-model" or cpu.mode == "host-passthrough":
-                model = cpu.mode
+        is_host = (cpu.mode in ["host-model", "host-passthrough"])
+        if not model and is_host:
+            model = cpu.mode
 
         if model:
             self.widget("cpu-model").get_child().set_text(model)
@@ -1946,8 +1925,11 @@ class vmmDetails(vmmGObjectUI):
                 self.widget("cpu-model"),
                 virtinst.DomainCpu.SPECIAL_MODE_HV_DEFAULT, column=2)
 
-        is_host = (cpu.mode == "host-model")
         self.widget("cpu-copy-host").set_active(bool(is_host))
+        text = _("Copy host CP_U configuration")
+        if is_host:
+            text += " (%s)" % cpu.mode
+        self.widget("cpu-copy-host").set_label(text)
         self._cpu_copy_host_clicked_cb(self.widget("cpu-copy-host"))
 
         if not self._cpu_secure_is_available():
@@ -1971,6 +1953,11 @@ class vmmDetails(vmmGObjectUI):
         maxmem = self.widget("mem-maxmem")
         curmem.set_value(int(round(vm_cur_mem)))
         maxmem.set_value(int(round(vm_max_mem)))
+
+        shared_mem, shared_mem_err = self.vm.has_shared_mem()
+        self.widget("shared-memory").set_active(shared_mem)
+        self.widget("shared-memory").set_sensitive(not bool(shared_mem_err))
+        self.widget("shared-memory").set_tooltip_text(shared_mem_err)
 
     def _refresh_disk_page(self, disk):
         path = disk.get_source_path()
@@ -2068,22 +2055,7 @@ class vmmDetails(vmmGObjectUI):
             self.widget("redir-address"), bool(address))
 
     def _refresh_tpm_page(self, tpmdev):
-        def show_ui(widgetname, val):
-            doshow = bool(val)
-            uiutil.set_grid_row_visible(self.widget(widgetname), doshow)
-            self.widget(widgetname).set_text(val or "-")
-
-        dev_type = tpmdev.type
-        self.widget("tpm-dev-type").set_text(
-                vmmAddHardware.tpm_pretty_type(dev_type))
-
-        vmmAddHardware.populate_tpm_model_combo(
-            self.vm, self.widget("tpm-model"), tpmdev.version)
-        uiutil.set_list_selection(self.widget("tpm-model"), tpmdev.model)
-
-        # Device type specific properties, only show if apply to the cur dev
-        show_ui("tpm-device-path", tpmdev.device_path)
-        show_ui("tpm-version", tpmdev.version)
+        self.tpmdetails.set_dev(tpmdev)
 
     def _refresh_panic_page(self, dev):
         model = dev.model or "isa"
@@ -2107,6 +2079,8 @@ class vmmDetails(vmmGObjectUI):
         dev_type = chardev.type or "pty"
         primary = self.vm.serial_is_console_dup(chardev)
         show_target_type = not (char_type in ["serial", "parallel"])
+        is_qemuga = chardev.target_name == chardev.CHANNEL_NAME_QEMUGA
+        show_clipboard = chardev.type == chardev.TYPE_QEMUVDAGENT
 
         if char_type == "serial":
             typelabel = _("Serial Device")
@@ -2131,8 +2105,9 @@ class vmmDetails(vmmGObjectUI):
         self.widget("char-type").set_markup(typelabel)
         self.widget("char-dev-type").set_text(dev_type)
 
-        def show_ui(widgetname, val):
-            doshow = bool(val)
+        def show_ui(widgetname, val, doshow=None):
+            if doshow is None:
+                doshow = bool(val)
             uiutil.set_grid_row_visible(self.widget(widgetname), doshow)
             self.widget(widgetname).set_text(val or "-")
 
@@ -2156,7 +2131,12 @@ class vmmDetails(vmmGObjectUI):
         show_ui("char-source-path", chardev.source.path)
         show_ui("char-target-type", target_type)
         show_ui("char-target-name", chardev.target_name)
-        show_ui("char-target-state", chardev.target_state)
+        # Only show for the qemu guest agent, which we get async
+        # notifiations about connection state. For spice this UI field
+        # can get out of date
+        show_ui("char-target-state", chardev.target_state, doshow=is_qemuga)
+        clipboard = _("On") if chardev.source.clipboard_copypaste else _("Off")
+        show_ui("char-clipboard-sharing", clipboard, doshow=show_clipboard)
 
     def _refresh_hostdev_page(self, hostdev):
         rom_bar = hostdev.rom_bar

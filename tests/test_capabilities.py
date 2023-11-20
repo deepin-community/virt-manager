@@ -24,18 +24,10 @@ def _buildCaps(filename):
 
 def testCapsCPUFeaturesNewSyntax():
     filename = "test-qemu-with-kvm.xml"
-    host_feature_list = ['lahf_lm', 'xtpr', 'cx16', 'tm2', 'est', 'vmx',
-        'ds_cpl', 'pbe', 'tm', 'ht', 'ss', 'acpi', 'ds']
-
     caps = _buildCaps(filename)
-    for f in host_feature_list:
-        assert f in [feat.name for feat in caps.host.cpu.features]
 
+    assert caps.host.cpu.arch == "x86_64"
     assert caps.host.cpu.model == "core2duo"
-    assert caps.host.cpu.vendor == "Intel"
-    assert caps.host.cpu.topology.threads == 3
-    assert caps.host.cpu.topology.cores == 5
-    assert caps.host.cpu.topology.sockets == 7
 
 
 def testCapsUtilFuncs():
@@ -59,21 +51,18 @@ def testCapsUtilFuncs():
         caps_empty.guest_lookup()
 
 
-def testCapsNuma():
-    cells = _buildCaps("lxc.xml").host.topology.cells
-    assert len(cells) == 1
-    assert len(cells[0].cpus) == 8
-    assert cells[0].cpus[3].id == '3'
-
-
 ##############################
 # domcapabilities.py testing #
 ##############################
 
-
 def testDomainCapabilities():
     xml = open(DATADIR + "/test-domcaps.xml").read()
     caps = DomainCapabilities(utils.URIs.open_testdriver_cached(), xml)
+
+    assert caps.machine == "my-machine-type"
+    assert caps.arch == "x86_64"
+    assert caps.domain == "kvm"
+    assert caps.path == "/bin/emulatorbin"
 
     assert caps.os.loader.supported is True
     assert caps.os.loader.get_values() == ["/foo/bar", "/tmp/my_path"]
@@ -84,13 +73,8 @@ def testDomainCapabilities():
 
 
 def testDomainCapabilitiesx86():
-    xml = open(DATADIR + "/kvm-x86_64-domcaps.xml").read()
+    xml = open(DATADIR + "/kvm-x86_64-domcaps-latest.xml").read()
     caps = DomainCapabilities(utils.URIs.open_testdriver_cached(), xml)
-
-    assert caps.machine == "pc-i440fx-2.1"
-    assert caps.arch == "x86_64"
-    assert caps.domain == "kvm"
-    assert caps.path == "/bin/qemu-system-x86_64"
 
     custom_mode = caps.cpu.get_mode("custom")
     assert bool(custom_mode)
@@ -106,9 +90,19 @@ def testDomainCapabilitiesx86():
     assert "Custom:" in caps.label_for_firmware_path("/foobar")
     assert "UEFI" in caps.label_for_firmware_path("OVMF")
 
+    assert caps.supports_filesystem_virtiofs()
+    assert caps.supports_memorybacking_memfd()
+
+    xml = open(DATADIR + "/kvm-x86_64-domcaps-amd-sev.xml").read()
+    caps = DomainCapabilities(utils.URIs.open_testdriver_cached(), xml)
+    assert caps.supports_sev_launch_security()
+
 
 def testDomainCapabilitiesAArch64():
     xml = open(DATADIR + "/kvm-aarch64-domcaps.xml").read()
     caps = DomainCapabilities(utils.URIs.open_testdriver_cached(), xml)
 
-    assert "None" in caps.label_for_firmware_path(None)
+    assert "Default" in caps.label_for_firmware_path(None)
+
+    assert not caps.supports_filesystem_virtiofs()
+    assert not caps.supports_memorybacking_memfd()

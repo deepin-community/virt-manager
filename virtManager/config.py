@@ -532,6 +532,14 @@ class vmmConfig(object):
     def set_default_cpu_setting(self, val):
         self.conf.set("/new-vm/cpu-default", val.lower())
 
+    def get_default_firmware_setting(self):
+        ret = self.conf.get("/new-vm/firmware")
+        if ret not in ["default", "uefi"]:
+            ret = "default"  # pragma: no cover
+        return ret
+    def set_firmware_setting(self, val):
+        self.conf.set("/new-vm/firmware", val.lower())
+
 
     # URL/Media path history
     def _url_add_helper(self, gsettings_path, url):

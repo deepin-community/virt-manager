@@ -44,6 +44,11 @@ class CharSource(XMLBuilder):
     master = XMLProperty("./@master")
     slave = XMLProperty("./@slave")
     mode = XMLProperty("./@mode")
+    tls = XMLProperty("./@tls", is_yesno=True)
+
+    # for qemu-vdagent channel
+    clipboard_copypaste = XMLProperty("./clipboard/@copypaste", is_yesno=True)
+    mouse_mode = XMLProperty("./mouse/@mode")
 
     # It's weird to track these properties here, since the XML is set on
     # the parent, but this is how libvirt does it internally, which means
@@ -80,6 +85,7 @@ class _DeviceChar(Device):
     TYPE_SPICEVMC = "spicevmc"
     TYPE_SPICEPORT = "spiceport"
     TYPE_NMDM = "nmdm"
+    TYPE_QEMUVDAGENT = "qemu-vdagent"
 
     CHANNEL_NAME_SPICE = "com.redhat.spice.0"
     CHANNEL_NAME_QEMUGA = "org.qemu.guest_agent.0"
@@ -117,7 +123,8 @@ class _DeviceChar(Device):
             self.source.mode = "bind"
         if not self.target_type and self.DEVICE_TYPE == "channel":
             self.target_type = "virtio"
-        if not self.target_name and self.type == self.TYPE_SPICEVMC:
+        if not self.target_name and (self.type == self.TYPE_SPICEVMC or
+                self.type == self.TYPE_QEMUVDAGENT):
             self.target_name = self.CHANNEL_NAME_SPICE
 
 

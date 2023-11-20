@@ -52,7 +52,7 @@ def _check_function(function, flag, run_args, data):
             return False
         if bool(flag_tuple):  # pragma: no cover
             return False
-    except Exception as e:  # pragma: no cover
+    except Exception:  # pragma: no cover
         # Other python exceptions likely mean the bindings are horked
         return False
     return True
@@ -303,6 +303,11 @@ class SupportCache:
     pool_metadata_prealloc = _make(
         flag="VIR_STORAGE_VOL_CREATE_PREALLOC_METADATA",
         version="1.0.1")
+
+    # Nodedev checks
+    # Added in libvirt 7.8.0 mid 2021
+    nodedev_isactive = _make(
+        function="virNodeDevice.isActive", run_args=())
 
 
     def _check_version(self, version):

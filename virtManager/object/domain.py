@@ -28,7 +28,7 @@ class _SENTINEL(object):
 
 
 def start_job_progress_thread(vm, meter, progtext):
-    current_thread = threading.currentThread()
+    current_thread = threading.current_thread()
 
     def jobinfo_cb():
         while True:
@@ -39,17 +39,15 @@ def start_job_progress_thread(vm, meter, progtext):
 
             try:
                 jobinfo = vm.job_info()
-                data_total      = float(jobinfo[3])
-                # data_processed  = float(jobinfo[4])
-                data_remaining  = float(jobinfo[5])
+                data_total      = int(jobinfo[3])
+                data_remaining  = int(jobinfo[5])
 
                 # data_total is 0 if the job hasn't started yet
                 if not data_total:
                     continue  # pragma: no cover
 
-                if not meter.started:
-                    meter.start(size=data_total,
-                                text=progtext)
+                if not meter.is_started():
+                    meter.start(progtext, data_total)
 
                 progress = data_total - data_remaining
                 meter.update(progress)
@@ -435,13 +433,31 @@ class vmmDomain(vmmLibvirtObject):
         return False
 
     def has_nvram(self):
-        return bool(self.get_xmlobj().os.firmware == 'efi' or
-                    (self.get_xmlobj().os.loader_ro is True and
-                     self.get_xmlobj().os.loader_type == "pflash" and
-                     self.get_xmlobj().os.nvram))
+        return bool(self.get_xmlobj().is_uefi() or
+                    self.get_xmlobj().os.nvram)
 
     def is_persistent(self):
         return bool(self._backend.isPersistent())
+
+    def has_shared_mem(self):
+        """
+        Return a value for 'Enable shared memory' UI, and an error if
+        the value is not editable
+        """
+        is_shared = False
+        err = None
+        domcaps = self.get_domain_capabilities()
+
+        if self.xmlobj.cpu.cells:
+            err = _("Can not change shared memory setting when <numa> is configured.")
+        elif (not domcaps.supports_filesystem_virtiofs() or
+              not domcaps.supports_memorybacking_memfd()):
+            err = _("Libvirt may not be new enough to support memfd.")
+        else:
+            is_shared = self.xmlobj.memoryBacking.source_type == "memfd"
+
+        return is_shared, err
+
 
     ##################
     # Support checks #
@@ -522,9 +538,32 @@ class vmmDomain(vmmLibvirtObject):
         We need to do this copy magic because there is no Libvirt storage API
         to rename storage volume.
         """
+        if not self.has_nvram():
+            return None, None
+
+        old_nvram_path = self.get_xmlobj().os.nvram
+        if not old_nvram_path:
+            # Probably using firmware=efi which doesn't put nvram
+            # path in the XML. Build the implied path
+            old_nvram_path = os.path.join(
+                self.conn.get_backend().get_libvirt_data_root_dir(),
+                self.conn.get_backend().get_uri_driver(),
+                "nvram", "%s_VARS.fd" % self.get_name())
+            log.debug("Guest is expected to use <nvram> but we didn't "
+                      "find one in the XML. Generated implied path=%s",
+                      old_nvram_path)
+
+        if not DeviceDisk.path_definitely_exists(
+                self.conn.get_backend(),
+                old_nvram_path):  # pragma: no cover
+            log.debug("old_nvram_path=%s but it doesn't appear to exist. "
+                      "skipping rename nvram duplication", old_nvram_path)
+            return None, None
+
+
         from virtinst import Cloner
         old_nvram = DeviceDisk(self.conn.get_backend())
-        old_nvram.set_source_path(self.get_xmlobj().os.nvram)
+        old_nvram.set_source_path(old_nvram_path)
 
         nvram_dir = os.path.dirname(old_nvram.get_source_path())
         new_nvram_path = os.path.join(nvram_dir,
@@ -542,12 +581,11 @@ class vmmDomain(vmmLibvirtObject):
     ##############################
 
     def rename_domain(self, new_name):
+        if new_name == self.get_name():
+            return
         Guest.validate_name(self.conn.get_backend(), str(new_name))
 
-        new_nvram = None
-        old_nvram = None
-        if self.has_nvram():
-            new_nvram, old_nvram = self._copy_nvram_file(new_name)
+        new_nvram, old_nvram = self._copy_nvram_file(new_name)
 
         try:
             self.define_name(new_name)
@@ -626,7 +664,8 @@ class vmmDomain(vmmLibvirtObject):
 
     def define_cpu(self, vcpus=_SENTINEL,
             model=_SENTINEL, secure=_SENTINEL, sockets=_SENTINEL,
-            cores=_SENTINEL, threads=_SENTINEL, clear_topology=_SENTINEL):
+            cores=_SENTINEL, threads=_SENTINEL,
+            clear_topology=_SENTINEL):
         guest = self._make_xmlobj_to_define()
 
         if vcpus != _SENTINEL:
@@ -646,20 +685,42 @@ class vmmDomain(vmmLibvirtObject):
                 guest.cpu.set_special_mode(guest, model)
             else:
                 guest.cpu.set_model(guest, model)
+
         self._redefine_xmlobj(guest)
 
-    def define_memory(self, memory=_SENTINEL, maxmem=_SENTINEL):
+
+    def _edit_shared_mem(self, guest, mem_shared):
+        source_type = _SENTINEL
+        access_mode = _SENTINEL
+
+        if mem_shared:
+            source_type = "memfd"
+            access_mode = "shared"
+        else:
+            source_type = None
+            access_mode = None
+
+        if source_type != _SENTINEL:
+            guest.memoryBacking.source_type = source_type
+        if access_mode != _SENTINEL:
+            guest.memoryBacking.access_mode = access_mode
+
+    def define_memory(self, memory=_SENTINEL, maxmem=_SENTINEL,
+            mem_shared=_SENTINEL):
         guest = self._make_xmlobj_to_define()
 
         if memory != _SENTINEL:
             guest.currentMemory = int(memory)
         if maxmem != _SENTINEL:
             guest.memory = int(maxmem)
+        if mem_shared != _SENTINEL:
+            self._edit_shared_mem(guest, mem_shared)
+
         self._redefine_xmlobj(guest)
 
     def define_overview(self, machine=_SENTINEL, description=_SENTINEL,
             title=_SENTINEL, loader=_SENTINEL,
-            nvram=_SENTINEL):
+            nvram=_SENTINEL, firmware=_SENTINEL):
         guest = self._make_xmlobj_to_define()
         if machine != _SENTINEL:
             guest.os.machine = machine
@@ -669,18 +730,23 @@ class vmmDomain(vmmLibvirtObject):
         if title != _SENTINEL:
             guest.title = title or None
 
-        if loader != _SENTINEL:
+        if loader != _SENTINEL and firmware != _SENTINEL:
+            guest.os.firmware = firmware
             if loader is None:
-                # Implies seabios, aka the default, so clear everything
                 guest.os.loader = None
-                guest.os.loader_ro = None
-                guest.os.loader_type = None
-                guest.os.nvram = None
-                guest.os.nvram_template = None
+
+                # But if switching to firmware=efi we may need to
+                # preserve NVRAM paths, so skip clearing all the properties
+                # and let libvirt do it for us.
+                if firmware is None:
+                    # Implies 'default', so clear everything
+                    guest.os.loader_ro = None
+                    guest.os.loader_type = None
+                    guest.os.nvram = None
+                    guest.os.nvram_template = None
             else:
                 # Implies UEFI
                 guest.set_uefi_path(loader)
-                guest.disable_hyperv_for_uefi()
 
         if nvram != _SENTINEL:
             guest.os.nvram = nvram
@@ -705,7 +771,7 @@ class vmmDomain(vmmLibvirtObject):
             guest.set_boot_order(boot_order, legacy=legacy)
 
         if boot_menu != _SENTINEL:
-            guest.os.enable_bootmenu = bool(boot_menu)
+            guest.os.bootmenu_enable = bool(boot_menu)
         if init != _SENTINEL:
             guest.os.init = init
             guest.os.set_initargs_string(initargs)
@@ -729,17 +795,19 @@ class vmmDomain(vmmLibvirtObject):
     def define_disk(self, devobj, do_hotplug,
             path=_SENTINEL, readonly=_SENTINEL,
             shareable=_SENTINEL, removable=_SENTINEL, cache=_SENTINEL,
-            discard=_SENTINEL, detect_zeroes=_SENTINEL, bus=_SENTINEL,
+            discard=_SENTINEL, bus=_SENTINEL,
             serial=_SENTINEL):
         xmlobj = self._make_xmlobj_to_define()
         editdev = self._lookup_device_to_define(xmlobj, devobj, do_hotplug)
         if not editdev:
             return  # pragma: no cover
 
+        validate = False
         if path != _SENTINEL:
             editdev.set_source_path(path)
             if not do_hotplug:
                 editdev.sync_path_props()
+                validate = True
 
         if readonly != _SENTINEL:
             editdev.read_only = readonly
@@ -754,18 +822,19 @@ class vmmDomain(vmmLibvirtObject):
             editdev.driver_cache = cache or None
         if discard != _SENTINEL:
             editdev.driver_discard = discard or None
-        if detect_zeroes != _SENTINEL:
-            editdev.driver_detect_zeroes = detect_zeroes or None
 
         if bus != _SENTINEL:
             editdev.change_bus(self.xmlobj, bus)
 
+        if validate:
+            editdev.validate()
         self._process_device_define(editdev, xmlobj, do_hotplug)
 
     def define_network(self, devobj, do_hotplug,
             ntype=_SENTINEL, source=_SENTINEL,
             mode=_SENTINEL, model=_SENTINEL,
-            macaddr=_SENTINEL, linkstate=_SENTINEL):
+            macaddr=_SENTINEL, linkstate=_SENTINEL,
+            portgroup=_SENTINEL):
         xmlobj = self._make_xmlobj_to_define()
         editdev = self._lookup_device_to_define(xmlobj, devobj, do_hotplug)
         if not editdev:
@@ -777,6 +846,7 @@ class vmmDomain(vmmLibvirtObject):
             editdev.type = ntype
             editdev.source = source
             editdev.source_mode = mode or None
+            editdev.portgroup = portgroup or None
 
         if model != _SENTINEL:
             if editdev.model != model:
@@ -951,14 +1021,17 @@ class vmmDomain(vmmLibvirtObject):
 
         self._process_device_define(editdev, xmlobj, do_hotplug)
 
-    def define_tpm(self, devobj, do_hotplug, model=_SENTINEL):
+    def define_tpm(self, devobj, do_hotplug, newdev=_SENTINEL):
         xmlobj = self._make_xmlobj_to_define()
         editdev = self._lookup_device_to_define(xmlobj, devobj, do_hotplug)
         if not editdev:
             return  # pragma: no cover
 
-        if model != _SENTINEL:
-            editdev.model = model
+        if newdev != _SENTINEL:
+            editdev.model = newdev.model
+            editdev.type = newdev.type
+            editdev.version = newdev.version
+            editdev.device_path = newdev.device_path
 
         self._process_device_define(editdev, xmlobj, do_hotplug)
 
@@ -1261,7 +1334,7 @@ class vmmDomain(vmmLibvirtObject):
 
     def get_boot_menu(self):
         guest = self.get_xmlobj()
-        return bool(guest.os.enable_bootmenu)
+        return bool(guest.os.bootmenu_enable)
     def get_boot_kernel_info(self):
         guest = self.get_xmlobj()
         return (guest.os.kernel, guest.os.initrd,
@@ -1597,14 +1670,14 @@ class vmmDomain(vmmLibvirtObject):
         ret = self.config.get_pervm(self.get_uuid(), "/vm-window-size")
         return ret
 
-    def get_console_password(self):
-        return self.config.get_pervm(self.get_uuid(), "/console-password")
-    def set_console_password(self, username, keyid):
-        return self.config.set_pervm(self.get_uuid(), "/console-password",
-                                     (username, keyid))
-    def del_console_password(self):
-        return self.config.set_pervm(self.get_uuid(), "/console-password",
-                                     ("", -1))
+    def get_console_username(self):
+        return self.config.get_pervm(self.get_uuid(), "/console-username")
+    def set_console_username(self, username):
+        return self.config.set_pervm(self.get_uuid(), "/console-username",
+                                     username)
+    def del_console_username(self):
+        return self.config.set_pervm(self.get_uuid(), "/console-username",
+                                     "")
 
     def get_cache_dir(self):
         ret = os.path.join(self.conn.get_cache_dir(), self.get_uuid())

@@ -12,26 +12,27 @@ from ..lib import uiutil
 from ..baseclass import vmmGObjectUI
 
 
-NET_ROW_TYPE = 0
-NET_ROW_SOURCE = 1
-NET_ROW_LABEL = 2
-NET_ROW_SENSITIVE = 3
-NET_ROW_MANUAL = 4
+NET_ROW_LABEL = 0
+NET_ROW_SENSITIVE = 1
+NET_ROW_DATA = 2
 
 
-def _build_row(nettype, source_name,
-        label, is_sensitive, manual=False):
-    row = []
-    row.insert(NET_ROW_TYPE, nettype)
-    row.insert(NET_ROW_SOURCE, source_name)
-    row.insert(NET_ROW_LABEL, label)
-    row.insert(NET_ROW_SENSITIVE, is_sensitive)
-    row.insert(NET_ROW_MANUAL, manual)
-    return row
+class _NetRowData:
+    @staticmethod
+    def build_row(*args, **kwargs):
+        rowdata = _NetRowData(*args, **kwargs)
+        return [rowdata.label, rowdata.is_sensitive, rowdata]
+
+    def __init__(self, nettype, source, label, is_sensitive, manual=False):
+        self.nettype = nettype
+        self.source = source
+        self.label = label
+        self.is_sensitive = is_sensitive
+        self.manual = manual
 
 
 def _build_manual_row(nettype, label):
-    return _build_row(nettype, None, label, True, manual=True)
+    return _NetRowData.build_row(nettype, None, label, True, manual=True)
 
 
 def _pretty_network_desc(nettype, source=None, netobj=None):
@@ -66,6 +67,7 @@ class vmmNetworkList(vmmGObjectUI):
 
         self.builder.connect_signals({
             "on_net_source_changed": self._on_net_source_changed,
+            "on_net_portgroup_changed": self._emit_changed,
             "on_net_bridge_name_changed": self._emit_changed,
         })
 
@@ -87,11 +89,9 @@ class vmmNetworkList(vmmGObjectUI):
 
     def _init_ui(self):
         fields = []
-        fields.insert(NET_ROW_TYPE, str)
-        fields.insert(NET_ROW_SOURCE, str)
         fields.insert(NET_ROW_LABEL, str)
         fields.insert(NET_ROW_SENSITIVE, bool)
-        fields.insert(NET_ROW_MANUAL, bool)
+        fields.insert(NET_ROW_DATA, object)
 
         model = Gtk.ListStore(*fields)
         combo = self.widget("net-source")
@@ -101,6 +101,11 @@ class vmmNetworkList(vmmGObjectUI):
         combo.pack_start(text, True)
         combo.add_attribute(text, 'text', NET_ROW_LABEL)
         combo.add_attribute(text, 'sensitive', NET_ROW_SENSITIVE)
+
+        combo = self.widget("net-portgroup")
+        model = Gtk.ListStore(str)
+        combo.set_model(model)
+        uiutil.init_combo_text_column(combo, 0)
 
         self.conn.connect("net-added", self._repopulate_network_list)
         self.conn.connect("net-removed", self._repopulate_network_list)
@@ -118,7 +123,7 @@ class vmmNetworkList(vmmGObjectUI):
             if net.get_xmlobj().virtualport_type == "openvswitch":
                 label += " (OpenVSwitch)"
 
-            row = _build_row(nettype, net.get_name(), label, True)
+            row = _NetRowData.build_row(nettype, net.get_name(), label, True)
             rows.append(row)
 
         return rows
@@ -151,12 +156,12 @@ class vmmNetworkList(vmmGObjectUI):
         if add_usermode:
             nettype = virtinst.DeviceInterface.TYPE_USER
             label = _pretty_network_desc(nettype)
-            model.append(_build_row(nettype, None, label, True))
+            model.append(_NetRowData.build_row(nettype, None, label, True))
 
         defaultnetidx = None
         for row in sorted(vnets, key=lambda r: r[NET_ROW_LABEL]):
             model.append(row)
-            if row[NET_ROW_SOURCE] == "default":
+            if row[NET_ROW_DATA].source == "default":
                 defaultnetidx = len(model) - 1
 
         bridgeidx = _add_manual_bridge_row()
@@ -228,11 +233,12 @@ class vmmNetworkList(vmmGObjectUI):
         combo = self.widget("net-source")
         def _find_row(_nettype, _source, _manual):
             for row in combo.get_model():
-                if _nettype and row[NET_ROW_TYPE] != _nettype:
+                rowdata = row[NET_ROW_DATA]
+                if _nettype and rowdata.nettype != _nettype:
                     continue
-                if _source and row[NET_ROW_SOURCE] != _source:
+                if _source and rowdata.source != _source:
                     continue
-                if _manual and row[NET_ROW_MANUAL] != _manual:
+                if _manual and rowdata.manual != _manual:
                     continue  # pragma: no cover
                 return row.iter
 
@@ -254,7 +260,7 @@ class vmmNetworkList(vmmGObjectUI):
         # a label for it and stuff it in the list
         desc = _pretty_network_desc(nettype, source)
         combo.get_model().insert(0,
-            _build_row(nettype, source, desc, True))
+            _NetRowData.build_row(nettype, source, desc, True))
         return combo.get_model()[0].iter
 
 
@@ -262,14 +268,15 @@ class vmmNetworkList(vmmGObjectUI):
     # Public APIs #
     ###############
 
-    def _get_network_row(self):
-        return uiutil.get_list_selected_row(self.widget("net-source"))
+    def _get_network_row_data(self):
+        return uiutil.get_list_selection(
+                self.widget("net-source"), column=NET_ROW_DATA)
 
     def get_network_selection(self):
-        row = self._get_network_row()
-        net_type = row[NET_ROW_TYPE]
-        net_src = row[NET_ROW_SOURCE]
-        net_check_manual = row[NET_ROW_MANUAL]
+        rowdata = self._get_network_row_data()
+        net_type = rowdata.nettype
+        net_src = rowdata.source
+        net_check_manual = rowdata.manual
 
         if net_check_manual:
             net_src = self.widget("net-manual-source").get_text() or None
@@ -280,10 +287,14 @@ class vmmNetworkList(vmmGObjectUI):
             # This is generally the safest and most featureful default
             mode = "bridge"
 
-        return net_type, net_src, mode
+        portgroup = None
+        if self.widget("net-portgroup").is_visible():
+            portgroup = uiutil.get_list_selection(self.widget("net-portgroup"))
+
+        return net_type, net_src, mode, portgroup
 
     def build_device(self, macaddr, model=None):
-        nettype, devname, mode = self.get_network_selection()
+        nettype, devname, mode, portgroup = self.get_network_selection()
 
         net = virtinst.DeviceInterface(self.conn.get_backend())
         net.type = nettype
@@ -291,6 +302,7 @@ class vmmNetworkList(vmmGObjectUI):
         net.macaddr = macaddr
         net.model = model
         net.source_mode = mode
+        net.portgroup = portgroup
 
         return net
 
@@ -302,6 +314,7 @@ class vmmNetworkList(vmmGObjectUI):
     def reset_state(self):
         self.widget("net-default-warn-box").set_visible(False)
         self.widget("net-manual-source").set_text("")
+        self.widget("net-portgroup").get_child().set_text("")
         self._repopulate_network_list()
 
     def set_dev(self, net):
@@ -311,6 +324,10 @@ class vmmNetworkList(vmmGObjectUI):
         combo = self.widget("net-source")
         combo.set_active_iter(rowiter)
         combo.emit("changed")
+
+        if net.portgroup:
+            uiutil.set_list_selection(
+                    self.widget("net-portgroup"), net.portgroup)
 
 
     #############
@@ -327,7 +344,8 @@ class vmmNetworkList(vmmGObjectUI):
         ignore2 = kwargs
 
         netlist = self.widget("net-source")
-        current_label = uiutil.get_list_selection(netlist, column=2)
+        current_label = uiutil.get_list_selection(
+                netlist, column=NET_ROW_LABEL)
 
         model = netlist.get_model()
         if not model:
@@ -341,25 +359,49 @@ class vmmNetworkList(vmmGObjectUI):
             netlist.set_model(model)
 
         for row in netlist.get_model():
-            if current_label and row[2] == current_label:
+            if current_label and row[NET_ROW_LABEL] == current_label:
                 netlist.set_active_iter(row.iter)
                 return
 
         netlist.set_active(default_idx)
 
 
+    def _populate_portgroups(self, portgroups):
+        combo = self.widget("net-portgroup")
+        model = combo.get_model()
+        model.clear()
+
+        default = None
+        for p in portgroups:
+            model.append([p.name])
+            if p.default:
+                default = p.name
+
+        uiutil.set_list_selection(combo, default)
+
     def _on_net_source_changed(self, src):
         ignore = src
         self._emit_changed()
-        row = self._get_network_row()
-        if not row:
+        rowdata = self._get_network_row_data()
+        if not rowdata:
             return  # pragma: no cover
 
-        nettype = row[NET_ROW_TYPE]
+        nettype = rowdata.nettype
         is_direct = (nettype == virtinst.DeviceInterface.TYPE_DIRECT)
+        is_virtual = (nettype == virtinst.DeviceInterface.TYPE_VIRTUAL)
+
         uiutil.set_grid_row_visible(
             self.widget("net-macvtap-warn-box"), is_direct)
 
-        show_bridge = row[NET_ROW_MANUAL]
+        show_bridge = rowdata.manual
         uiutil.set_grid_row_visible(
             self.widget("net-manual-source"), show_bridge)
+
+        portgroups = []
+        if is_virtual:
+            net = self.conn.get_net_by_name(rowdata.source)
+            portgroups = net.get_xmlobj().portgroups
+
+        uiutil.set_grid_row_visible(
+            self.widget("net-portgroup"), bool(portgroups))
+        self._populate_portgroups(portgroups)

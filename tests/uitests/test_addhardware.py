@@ -120,7 +120,7 @@ def testAddCephDisk(app):
     tab.find_fuzzy("Select or create", "radio").click()
     tab.find("storage-browse", "push button").click()
     browse = app.root.find("vmm-storage-browser")
-    browse.find_fuzzy("rbd-ceph", "table cell").bring_on_screen().click()
+    browse.find_fuzzy("pool-rbd-ceph", "table cell").bring_on_screen().click()
     browse.find_fuzzy("some-rbd-vol", "table cell").click()
     browse.find("Choose Volume", "push button").click()
     _finish(addhw, check=details)
@@ -154,7 +154,6 @@ def testAddDisks(app):
     tab.find("Serial:", "text").set_text("ZZZZ")
     tab.combo_select("Cache mode:", "none")
     tab.combo_select("Discard mode:", "ignore")
-    tab.combo_select("Detect zeroes:", "unmap")
     # High number but we are non-sparse by default so it won't complain
     tab.find("GiB", "spin button").set_text("200000")
     _finish(addhw, check=details)
@@ -177,7 +176,7 @@ def testAddDisks(app):
     browse = app.root.find("vmm-storage-browser")
 
     # Create a vol, refresh, then delete it
-    browse.find_fuzzy("default-pool", "table cell").click()
+    browse.find_fuzzy("pool-dir", "table cell").click()
     browse.find("vol-new", "push button").click()
     newvol = app.find_window("Add a Storage Volume")
     newname = "a-newvol"
@@ -213,7 +212,7 @@ def testAddDisks(app):
     tab.find("storage-browse", "push button").click()
     browse = app.root.find("vmm-storage-browser")
 
-    browse.find_fuzzy("disk-pool", "table cell").click()
+    browse.find_fuzzy("pool-logical", "table cell").click()
     browse.find("diskvol1", "table cell").click()
     browse.find("Choose Volume", "push button").click()
     lib.utils.check(lambda: "/diskvol1" in storageent.text)
@@ -230,7 +229,7 @@ def testAddDisks(app):
     tab.combo_select("Device type:", "Floppy device")
     diskradio = tab.find_fuzzy("Create a disk image", "radio")
     lib.utils.check(lambda: not diskradio.sensitive)
-    tab.find("storage-entry").set_text("/dev/default-pool/bochs-vol")
+    tab.find("storage-entry").set_text("/pool-dir/bochs-vol")
     _finish(addhw, check=details)
 
     # empty cdrom
@@ -353,6 +352,17 @@ def testAddNetworks(app):
     tab.combo_select("Device model:", "virtio")
     _finish(addhw, check=details)
 
+    # Portgroup
+    _open_addhw(app, details)
+    tab = _select_hw(addhw, "Network", "network-tab")
+    tab.find("MAC Address Field", "text").set_text("00:11:00:11:00:CC")
+    tab.combo_select("net-source", "Virtual network 'plainbridge-portgroups'")
+    c = tab.find_fuzzy("Portgroup:", "combo box")
+    c.click_combo_entry()
+    lib.utils.check(lambda: c.find("engineering", "menu item").selected)
+    c.find("engineering", "menu item").click()
+    _finish(addhw, check=details)
+
     # Manual macvtap
     _open_addhw(app, details)
     tab = _select_hw(addhw, "Network", "network-tab")
@@ -459,6 +469,12 @@ def testAddHosts(app):
     app.click_alert_button("device is already in use by", "Yes")
     lib.utils.check(lambda: details.active)
 
+    # Add MDEV device
+    _open_addhw(app, details)
+    tab = _select_hw(addhw, "MDEV Host Device", "host-tab")
+    tab.find_fuzzy("mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110",
+                   "table cell").click()
+    _finish(addhw, check=details)
 
 
 def testAddChars(app):
@@ -516,7 +532,7 @@ def testAddLXCFilesystem(app):
     tab.find("Browse...", "push button").click()
     # Specific testing for dir vol handling for filesystem browse
     browsewin = app.root.find("vmm-storage-browser")
-    browsewin.find_fuzzy("default-pool", "table cell").click()
+    browsewin.find_fuzzy("pool-dir", "table cell").click()
     browsewin.find_fuzzy("bochs-vol", "table cell").click()
     choose = browsewin.find("Choose Volume")
     lib.utils.check(lambda: not choose.sensitive)
@@ -525,7 +541,7 @@ def testAddLXCFilesystem(app):
     choose.click()
     lib.utils.check(lambda: addhw.active)
     lib.utils.check(
-            lambda: source.text == "/dev/default-pool/dir-vol")
+            lambda: source.text == "/pool-dir/dir-vol")
 
     tab.find_fuzzy("Export filesystem", "check").click()
     # Use this to test some error.py logic for truncating large errors
@@ -594,7 +610,7 @@ def testAddHWMisc1(app):
     tab.combo_select("Mode:", "Passthrough")
     _finish(addhw, check=details)
 
-    # Add TPM emulated
+    # Add TPM default
     _open_addhw(app, details)
     tab = _select_hw(addhw, "TPM", "tpm-tab")
     _finish(addhw, check=details)
@@ -629,9 +645,10 @@ def testAddHWMisc2(app):
     # Add TPM passthrough
     _open_addhw(app, details)
     tab = _select_hw(addhw, "TPM", "tpm-tab")
-    tab.combo_select("Model:", "TIS")
-    tab.combo_select("Backend:", "Passthrough")
+    tab.combo_select("Type:", "Passthrough")
     tab.find("Device Path:", "text").set_text("/tmp/foo")
+    tab.find("Advanced options", "toggle button").click_expander()
+    tab.combo_select("Model:", "TIS")
     _finish(addhw, check=details)
 
     # Add RNG

@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
-#
 # Copyright 2013-2014 Red Hat, Inc.
 #
 # This work is licensed under the GNU GPLv2 or later.
 # See the COPYING file in the top-level directory.
 
+import os
 import sys
 
 import libvirt
@@ -155,19 +154,27 @@ def action_edit(guest, options, parserclass):
                  {"option": options.edit,
                   "objecttype": parserclass.cli_arg_name})
     if options.os_variant is not None:
-        fail(_("--os-variant is not supported with --edit"))
+        fail(_("--os-variant/--osinfo is not supported with --edit"))
 
-    return cli.parse_option_strings(options, guest, inst, editing=True)
+    devs = []
+    for editinst in xmlutil.listify(inst):
+        devs += cli.run_parser(options, guest, parserclass, editinst=editinst)
+    return devs
 
 
-def action_add_device(guest, options, parserclass):
+def action_add_device(guest, options, parserclass, devs):
     if not parserclass.prop_is_list(guest):
         fail(_("Cannot use --add-device with --%s") % parserclass.cli_arg_name)
     set_os_variant(options, guest)
-    devs = cli.parse_option_strings(options, guest, None)
-    devs = xmlutil.listify(devs)
-    for dev in devs:
-        dev.set_defaults(guest)
+
+    if devs:
+        for dev in devs:
+            guest.add_device(dev)
+    else:
+        devs = cli.run_parser(options, guest, parserclass)
+        for dev in devs:
+            dev.set_defaults(guest)
+
     return devs
 
 
@@ -176,7 +183,7 @@ def action_remove_device(guest, options, parserclass):
         fail(_("Cannot use --remove-device with --%s") %
              parserclass.cli_arg_name)
     if options.os_variant is not None:
-        fail(_("--os-variant is not supported with --remove-device"))
+        fail(_("--os-variant/--osinfo is not supported with --remove-device"))
 
     devs = _find_objects_to_edit(guest, "remove-device",
         getattr(options, parserclass.cli_arg_name)[-1], parserclass)
@@ -194,21 +201,14 @@ def action_remove_device(guest, options, parserclass):
     return devs
 
 
-def action_build_xml(conn, options, parserclass, guest):
+def action_build_xml(options, parserclass, guest):
     if not parserclass.guest_propname:
         fail(_("--build-xml not supported for --%s") %
              parserclass.cli_arg_name)
     if options.os_variant is not None:
-        fail(_("--os-variant is not supported with --build-xml"))
+        fail(_("--os-variant/--osinfo is not supported with --build-xml"))
 
-    inst = parserclass.lookup_prop(guest)
-    if parserclass.prop_is_list(guest):
-        inst = inst.new()
-    else:
-        inst = inst.__class__(conn)
-
-    devs = cli.parse_option_strings(options, guest, inst)
-    devs = xmlutil.listify(devs)
+    devs = cli.run_parser(options, guest, parserclass)
     for dev in devs:
         dev.set_defaults(guest)
     return devs
@@ -251,7 +251,7 @@ def start_domain_transient(conn, xmlobj, devs, action, confirm):
         dom = conn.createXML(xmlobj.get_xml())
     except libvirt.libvirtError as e:
         fail(_("Failed starting domain '%(domain)s': %(error)s") % {
-                 "vm": xmlobj.name,
+                 "domain": xmlobj.name,
                  "error": e,
              })
     else:
@@ -298,16 +298,23 @@ def update_changes(domain, devs, action, confirm):
             elif action == "update":
                 domain.updateDeviceFlags(xml, libvirt.VIR_DOMAIN_AFFECT_LIVE)
         except libvirt.libvirtError as e:
-            fail(msg_fail % {"error": e})
+            if "VIRTXML_TESTSUITE_UPDATE_IGNORE_FAIL" not in os.environ:
+                fail(msg_fail % {"error": e})
 
-        # Test driver doesn't support device hotplug so we can't reach this
-        print_stdout(msg_success)  # pragma: no cover
-        if confirm:  # pragma: no cover
+        print_stdout(msg_success)
+        if confirm:
             print_stdout("")
 
 
-def prepare_changes(xmlobj, options, parserclass):
-    origxml = xmlobj.get_xml()
+def prepare_changes(orig_xmlobj, options, parserclass, devs=None):
+    """
+    Parse the command line device/XML arguments, and apply the changes to
+    a copy of the passed in xmlobj.
+
+    :returns: (list of device objects, action string, altered xmlobj)
+    """
+    origxml = orig_xmlobj.get_xml()
+    xmlobj = orig_xmlobj.__class__(conn=orig_xmlobj.conn, parsexml=origxml)
     has_edit = options.edit != -1
     is_xmlcli = parserclass is cli.ParserXML
 
@@ -323,7 +330,7 @@ def prepare_changes(xmlobj, options, parserclass):
         action = "update"
 
     elif options.add_device:
-        devs = action_add_device(xmlobj, options, parserclass)
+        devs = action_add_device(xmlobj, options, parserclass, devs)
         action = "hotplug"
 
     elif options.remove_device:
@@ -343,7 +350,7 @@ def prepare_changes(xmlobj, options, parserclass):
     elif options.print_xml:
         print_stdout(newxml)
 
-    return devs, action
+    return devs, action, xmlobj
 
 
 #######################
@@ -439,6 +446,8 @@ def main(conn=None):
 
     if cli.check_option_introspection(options):
         return 0
+    if cli.check_osinfo_list(options):
+        return 0
 
     options.stdinxml = None
     if not options.domain and not options.build_xml:
@@ -493,19 +502,20 @@ def main(conn=None):
     vm_is_running = bool(active_xmlobj)
 
     if options.build_xml:
-        devs = action_build_xml(conn, options, parserclass, inactive_xmlobj)
+        devs = action_build_xml(options, parserclass, inactive_xmlobj)
         for dev in devs:
             # pylint: disable=no-member
-            print_stdout(dev.get_xml())
+            print_stdout(xmlutil.unindent_device_xml(dev.get_xml()))
         return 0
 
+    devs = None
     performed_update = False
     if options.update:
         if options.update and options.start:
             fail_conflicting("--update", "--start")
-
         if vm_is_running:
-            devs, action = prepare_changes(active_xmlobj, options, parserclass)
+            devs, action, dummy = prepare_changes(
+                    active_xmlobj, options, parserclass)
             update_changes(domain, devs, action, options.confirm)
             performed_update = True
         else:
@@ -513,18 +523,18 @@ def main(conn=None):
                 _("The VM is not running, --update is inapplicable."))
         if not options.define:
             # --update and --no-define passed, so we are done
-            # It's hard to hit this case with the test suite
-            return 0  # pragma: no cover
+            return 0
 
     original_xml = inactive_xmlobj.get_xml()
-    devs, action = prepare_changes(inactive_xmlobj, options, parserclass)
+    devs, action, xmlobj_to_define = prepare_changes(
+            inactive_xmlobj, options, parserclass, devs=devs)
     if not options.define:
         if options.start:
-            start_domain_transient(conn, inactive_xmlobj, devs,
+            start_domain_transient(conn, xmlobj_to_define, devs,
                                    action, options.confirm)
         return 0
 
-    dom = define_changes(conn, inactive_xmlobj,
+    dom = define_changes(conn, xmlobj_to_define,
                          devs, action, options.confirm)
     if not dom:
         # --confirm user said 'no'

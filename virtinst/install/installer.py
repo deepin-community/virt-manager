@@ -15,6 +15,7 @@ from .installertreemedia import InstallerTreeMedia
 from .installerinject import perform_cdrom_injections
 from ..domain import DomainOs
 from ..devices import DeviceDisk
+from ..guest import Guest
 from ..osdict import OSDB
 from ..logger import log
 from .. import progress
@@ -104,7 +105,7 @@ class Installer(object):
             name = os.path.basename(path)
 
             try:
-                meter.start(size=None, text=_("Removing disk '%s'") % name)
+                meter.start(_("Removing disk '%s'") % name, None)
 
                 if disk.get_vol_object():
                     disk.get_vol_object().delete()
@@ -113,7 +114,7 @@ class Installer(object):
                     # it's here in case future assumptions change
                     os.unlink(path)
 
-                meter.end(0)
+                meter.end()
             except Exception as e:  # pragma: no cover
                 log.debug("Failed to remove disk '%s'",
                     name, exc_info=True)
@@ -183,8 +184,8 @@ class Installer(object):
 
         dev = self._make_cdrom_device(location)
         dev.set_defaults(guest)
-        self._unattended_install_cdrom_device = dev
-        guest.add_device(self._unattended_install_cdrom_device)
+        self._unattended_install_cdrom_device = dev.target
+        guest.add_device(dev)
 
         if self.conn.in_testsuite():
             # Hack to set just the XML path differently for the test suite.
@@ -192,12 +193,13 @@ class Installer(object):
             dev.source.file = _make_testsuite_path(location)
 
     def _remove_unattended_install_cdrom_device(self, guest):
-        dummy = guest
         if not self._unattended_install_cdrom_device:
             return
 
-        self._unattended_install_cdrom_device.set_source_path(None)
-        self._unattended_install_cdrom_device.sync_path_props()
+        disk = [d for d in guest.devices.disk if
+                d.target == self._unattended_install_cdrom_device][0]
+        disk.set_source_path(None)
+        disk.sync_path_props()
 
     def _build_boot_order(self, guest, bootdev):
         bootorder = [bootdev]
@@ -498,22 +500,20 @@ class Installer(object):
         into the guest. Things like LiveCDs, Import, or a manually specified
         bootorder do not have an install phase.
         """
-        if self.has_cloudinit() or self.has_unattended():
-            # These cases require post-boot altering to remove the
-            # temporary media. It isn't really an install phase and more
-            # like a 'final_xml' phase but we don't have a real abstraction
-            # for that yet
-            return True
         if self._no_install:
             return False
         return bool(self._cdrom or
                     self._install_bootdev or
                     self._treemedia)
 
+    def _requires_postboot_xml_changes(self):
+        if self.has_cloudinit() or self.has_unattended():
+            return True
+        return self.has_install_phase()
+
     def options_specified(self):
         """
         Return True if some explicit install option was actually passed in
-        Validate that some install option was actually passed in.
         """
         if self._no_install:
             return True
@@ -564,50 +564,38 @@ class Installer(object):
     # guest install handling #
     ##########################
 
-    def _prepare_get_install_xml(self, guest):
-        # We do a shallow copy of the OS block here, so that we can
-        # set the install time properties but not permanently overwrite
-        # any config the user explicitly requested.
-        data = (guest.os.bootorder, guest.os.kernel, guest.os.initrd,
-                guest.os.kernel_args, guest.on_reboot, guest.currentMemory,
-                guest.memory)
-        return data
+    def _build_postboot_xml(self, final_xml, meter):
+        initial_guest = Guest(self.conn, parsexml=final_xml)
+        self._alter_bootconfig(initial_guest)
+        self._alter_install_resources(initial_guest, meter)
+        if self.has_cloudinit():
+            initial_guest.set_smbios_serial_cloudinit()
 
-    def _finish_get_install_xml(self, guest, data):
-        (guest.os.bootorder, guest.os.kernel, guest.os.initrd,
-                guest.os.kernel_args, guest.on_reboot, guest.currentMemory,
-                guest.memory) = data
+        final_guest = Guest(self.conn, parsexml=final_xml)
+        self._remove_install_cdrom_media(final_guest)
+        self._remove_unattended_install_cdrom_device(final_guest)
 
-    def _get_install_xml(self, guest, meter):
-        data = self._prepare_get_install_xml(guest)
-        try:
-            self._alter_bootconfig(guest)
-            self._alter_install_resources(guest, meter)
-            ret = guest.get_xml()
-            return ret
-        finally:
-            self._remove_install_cdrom_media(guest)
-            self._remove_unattended_install_cdrom_device(guest)
-            self._finish_get_install_xml(guest, data)
+        return initial_guest.get_xml(), final_guest.get_xml()
 
     def _build_xml(self, guest, meter):
-        install_xml = None
-        if self.has_install_phase():
-            install_xml = self._get_install_xml(guest, meter)
-        final_xml = self._pre_reinstall_xml or guest.get_xml()
+        initial_xml = None
+        final_xml = guest.get_xml()
+        if self._requires_postboot_xml_changes():
+            initial_xml, final_xml = self._build_postboot_xml(final_xml, meter)
+        final_xml = self._pre_reinstall_xml or final_xml
 
-        log.debug("Generated install XML: %s",
-            (install_xml and ("\n" + install_xml) or "None required"))
-        log.debug("Generated boot XML: \n%s", final_xml)
+        log.debug("Generated initial_xml: %s",
+            (initial_xml and ("\n" + initial_xml) or "None required"))
+        log.debug("Generated final_xml: \n%s", final_xml)
 
-        return install_xml, final_xml
+        return initial_xml, final_xml
 
-    def _manual_transient_create(self, install_xml, final_xml, needs_boot):
+    def _manual_transient_create(self, initial_xml, final_xml, needs_boot):
         """
         For hypervisors (like vz) that don't implement createXML,
         we need to define+start, and undefine on start failure
         """
-        domain = self.conn.defineXML(install_xml or final_xml)
+        domain = self.conn.defineXML(initial_xml or final_xml)
         if not needs_boot:
             return domain
 
@@ -621,12 +609,12 @@ class Installer(object):
                 pass
             raise
 
-        if install_xml and install_xml != final_xml:
+        if initial_xml and initial_xml != final_xml:
             domain = self.conn.defineXML(final_xml)
         return domain
 
     def _create_guest(self, guest,
-                      meter, install_xml, final_xml, doboot, transient):
+                      meter, initial_xml, final_xml, doboot, transient):
         """
         Actually do the XML logging, guest defining/creating
 
@@ -634,19 +622,19 @@ class Installer(object):
         """
         meter_label = _("Creating domain...")
         meter = progress.ensure_meter(meter)
-        meter.start(size=None, text=meter_label)
-        needs_boot = doboot or self.has_install_phase()
+        meter.start(meter_label, None)
+        needs_boot = doboot or bool(initial_xml)
 
         if guest.type == "vz" and not self._is_reinstall:
             if transient:
                 raise RuntimeError(_("Domain type 'vz' doesn't support "
                     "transient installs."))
             domain = self._manual_transient_create(
-                    install_xml, final_xml, needs_boot)
+                    initial_xml, final_xml, needs_boot)
 
         else:
             if transient or needs_boot:
-                domain = self.conn.createXML(install_xml or final_xml, 0)
+                domain = self.conn.createXML(initial_xml or final_xml, 0)
             if not transient:
                 domain = self.conn.defineXML(final_xml)
 
@@ -655,6 +643,7 @@ class Installer(object):
                           domain.XMLDesc(0))
         except Exception as e:  # pragma: no cover
             log.debug("Error fetching XML from libvirt object: %s", e)
+        meter.end()
         return domain
 
     def _flag_autostart(self, domain):
@@ -674,7 +663,7 @@ class Installer(object):
     # Public install API #
     ######################
 
-    def start_install(self, guest, meter=None,
+    def start_install(self, user_guest, meter=None,
                       dry=False, return_xml=False,
                       doboot=True, transient=False):
         """
@@ -684,22 +673,27 @@ class Installer(object):
         :param return_xml: Don't create the guest, just return generated XML
         """
         if not self._is_reinstall and not return_xml:
-            guest.validate_name(guest.conn, guest.name)
-        self.set_install_defaults(guest)
+            Guest.validate_name(self.conn, user_guest.name)
+        self.set_install_defaults(user_guest)
+        disks = user_guest.devices.disk[:]
+
+        # All installer XML alterations are made on this guest instance,
+        # so the user_guest instance is left intact
+        guest = Guest(self.conn, parsexml=user_guest.get_xml())
 
         try:
             self._prepare(guest, meter)
 
             if not dry and not self._is_reinstall:
-                for dev in guest.devices.disk:
+                for dev in disks:
                     dev.build_storage(meter)
 
-            install_xml, final_xml = self._build_xml(guest, meter)
+            initial_xml, final_xml = self._build_xml(guest, meter)
             if dry or return_xml:
-                return (install_xml, final_xml)
+                return (initial_xml, final_xml)
 
             domain = self._create_guest(
-                    guest, meter, install_xml, final_xml,
+                    guest, meter, initial_xml, final_xml,
                     doboot, transient)
 
             if self.autostart:

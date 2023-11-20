@@ -25,9 +25,9 @@ class _DomainDevices(XMLBuilder):
     XML_NAME = "devices"
     _XML_PROP_ORDER = ['disk', 'controller', 'filesystem', 'interface',
             'smartcard', 'serial', 'parallel', 'console', 'channel',
-            'input', 'tpm', 'graphics', 'sound', 'video', 'hostdev',
+            'input', 'tpm', 'graphics', 'sound', 'audio', 'video', 'hostdev',
             'redirdev', 'watchdog', 'memballoon', 'rng', 'panic',
-            'memory', 'vsock', 'iommu']
+            'shmem', 'memory', 'vsock', 'iommu']
 
 
     disk = XMLChildProperty(DeviceDisk)
@@ -43,6 +43,7 @@ class _DomainDevices(XMLBuilder):
     tpm = XMLChildProperty(DeviceTpm)
     graphics = XMLChildProperty(DeviceGraphics)
     sound = XMLChildProperty(DeviceSound)
+    audio = XMLChildProperty(DeviceAudio)
     video = XMLChildProperty(DeviceVideo)
     hostdev = XMLChildProperty(DeviceHostdev)
     redirdev = XMLChildProperty(DeviceRedirdev)
@@ -50,6 +51,7 @@ class _DomainDevices(XMLBuilder):
     memballoon = XMLChildProperty(DeviceMemballoon)
     rng = XMLChildProperty(DeviceRng)
     panic = XMLChildProperty(DevicePanic)
+    shmem = XMLChildProperty(DeviceShMem)
     memory = XMLChildProperty(DeviceMemory)
     vsock = XMLChildProperty(DeviceVsock)
     iommu = XMLChildProperty(DeviceIommu)
@@ -65,9 +67,18 @@ class _DomainDevices(XMLBuilder):
 
 class _IOThreadID(XMLBuilder):
     XML_NAME = "iothread"
-    _XML_PROP_ORDER = ["id"]
+    _XML_PROP_ORDER = ["id", "thread_pool_min", "thread_pool_max"]
 
     id = XMLProperty("./@id", is_int=True)
+    thread_pool_min = XMLProperty("./@thread_pool_min", is_int=True)
+    thread_pool_max = XMLProperty("./@thread_pool_max", is_int=True)
+
+
+class _DefaultIOThread(XMLBuilder):
+    XML_NAME = "defaultiothread"
+
+    thread_pool_min = XMLProperty("./@thread_pool_min", is_int=True)
+    thread_pool_max = XMLProperty("./@thread_pool_max", is_int=True)
 
 
 class Guest(XMLBuilder):
@@ -176,12 +187,14 @@ class Guest(XMLBuilder):
     XML_NAME = "domain"
     _XML_PROP_ORDER = [
         "type", "name", "uuid", "genid", "genid_enable",
-        "title", "description", "_metadata", "iothreads", "iothreadids",
+        "title", "description", "_metadata",
+        "iothreads", "iothreadids", "defaultiothread",
         "maxMemory", "maxMemorySlots", "memory", "_currentMemory",
         "blkiotune", "memtune", "memoryBacking",
         "_vcpus", "vcpu_current", "vcpu_placement",
         "vcpu_cpuset", "vcpulist", "numatune", "resource", "sysinfo",
-        "bootloader", "os", "idmap", "features", "cpu", "clock",
+        "bootloader", "bootloader_args", "os", "idmap",
+        "features", "cpu", "clock",
         "on_poweroff", "on_reboot", "on_crash",
         "pm", "emulator", "devices", "launchSecurity", "seclabels", "keywrap"]
 
@@ -197,7 +210,13 @@ class Guest(XMLBuilder):
         self.skip_default_usbredir = False
         self.skip_default_graphics = False
         self.skip_default_rng = False
+        self.skip_default_tpm = False
         self.x86_cpu_default = self.cpu.SPECIAL_MODE_APP_DEFAULT
+
+        # qemu 6.1, fairly new when we added this option, has an unfortunate
+        # bug with >= 15 root ports, so we choose 14 instead of our original 16
+        # https://gitlab.com/qemu-project/qemu/-/issues/641
+        self.num_pcie_root_ports = 14
 
         self.skip_default_osinfo = False
         self.uefi_requested = False
@@ -215,6 +234,7 @@ class Guest(XMLBuilder):
 
     iothreads = XMLProperty("./iothreads", is_int=True)
     iothreadids = XMLChildProperty(_IOThreadID, relative_xpath="./iothreadids")
+    defaultiothread = XMLChildProperty(_DefaultIOThread)
 
     def _set_currentMemory(self, val):
         if val is not None:
@@ -253,6 +273,7 @@ class Guest(XMLBuilder):
     id = XMLProperty("./@id", is_int=True)
     type = XMLProperty("./@type")
     bootloader = XMLProperty("./bootloader")
+    bootloader_args = XMLProperty("./bootloader_args")
     description = XMLProperty("./description")
     title = XMLProperty("./title")
     emulator = XMLProperty("./devices/emulator")
@@ -512,28 +533,18 @@ class Guest(XMLBuilder):
         arm+machvirt prefers UEFI since it's required for traditional
         install methods
         """
-        return self.os.is_arm_machvirt()
+        if (self.os.is_x86() and
+            (self.conn.is_qemu() or self.conn.is_test())):
+            # If OS has dropped support for 'bios', we have no
+            # choice but to use EFI.
+            # For other OS still prefer BIOS since it is faster
+            # and doesn't break QEMU internal snapshots
+            prefer_efi = self.osinfo.requires_firmware_efi(self.os.arch)
+        else:
+            prefer_efi = self.os.is_arm_machvirt() or self.conn.is_bhyve()
 
-    def get_uefi_path(self):
-        """
-        If UEFI firmware path is found, return it, otherwise raise an error
-        """
-        domcaps = self.lookup_domcaps()
-
-        if not domcaps.supports_uefi_xml():
-            raise RuntimeError(_("Libvirt version does not support UEFI."))
-
-        if not domcaps.arch_can_uefi():
-            raise RuntimeError(
-                _("Don't know how to setup UEFI for arch '%s'") %
-                self.os.arch)
-
-        path = domcaps.find_uefi_path_for_arch()
-        if not path:  # pragma: no cover
-            raise RuntimeError(_("Did not find any UEFI binary path for "
-                "arch '%s'") % self.os.arch)
-
-        return path
+        log.debug("Prefer EFI => %s", prefer_efi)
+        return prefer_efi
 
     def is_uefi(self):
         if self.os.loader and self.os.loader_type == "pflash":
@@ -542,8 +553,8 @@ class Guest(XMLBuilder):
 
     def set_uefi_path(self, path):
         """
-        Configure UEFI for the VM, but only if libvirt is advertising
-        a known UEFI binary path.
+        Set old style UEFI XML via loader path.
+        Set up smm if needed for secureboot
         """
         self.os.loader_ro = True
         self.os.loader_type = "pflash"
@@ -560,25 +571,24 @@ class Guest(XMLBuilder):
             "secboot" in self.os.loader):
             self.features.smm = True
             self.os.loader_secure = True
-            if self.os.machine and "q35" not in self.os.machine:
+            if not self.os.is_q35():
                 log.warning("Changing machine type from '%s' to 'q35' "
                         "which is required for UEFI secure boot.",
                         self.os.machine)
                 self.os.machine = "q35"
 
-    def disable_hyperv_for_uefi(self):
-        # UEFI doesn't work with hyperv bits for some OS
-        if not self.is_uefi():
-            return  # pragma: no cover
-        if not self.osinfo.broken_uefi_with_hyperv():
-            return  # pragma: no cover
-        self.features.hyperv_relaxed = None
-        self.features.hyperv_vapic = None
-        self.features.hyperv_spinlocks = None
-        self.features.hyperv_spinlocks_retries = None
-        for i in self.clock.timers:
-            if i.name == "hypervclock":
-                self.clock.timers.remove(i)
+    def enable_uefi(self):
+        """
+        Enable UEFI using our default logic
+        """
+        domcaps = self.lookup_domcaps()
+        if domcaps.supports_firmware_efi():
+            self.os.firmware = "efi"
+            return
+
+        path = self._lookup_default_uefi_path()
+        log.debug("Setting default UEFI path=%s", path)
+        self.set_uefi_path(path)
 
     def has_spice(self):
         for gfx in self.devices.graphics:
@@ -616,24 +626,29 @@ class Guest(XMLBuilder):
     def hyperv_supported(self):
         if not self.osinfo.is_windows():
             return False
-        if (self.is_uefi() and
-            self.osinfo.broken_uefi_with_hyperv()):
-            return False
         return True
 
     def lookup_domcaps(self):
+        def _compare_machine(domcaps):
+            capsinfo = self.lookup_capsinfo()
+            if self.os.machine == domcaps.machine:
+                return True
+            if capsinfo.is_machine_alias(self.os.machine, domcaps.machine):
+                return True
+            return False
+
         # We need to regenerate domcaps cache if any of these values change
-        def _compare(domcaps):  # pragma: no cover
+        def _compare(domcaps):
             if self.type == "test":
                 # Test driver doesn't support domcaps. We kinda fake it in
                 # some cases, but it screws up the checking here for parsed XML
                 return True
-            if self.os.machine and self.os.machine != domcaps.machine:
+            if self.os.machine and not _compare_machine(domcaps):
                 return False
             if self.type and self.type != domcaps.domain:
                 return False
             if self.os.arch and self.os.arch != domcaps.arch:
-                return False
+                return False  # pragma: no cover
             if self.emulator and self.emulator != domcaps.path:
                 return False
             return True
@@ -689,16 +704,75 @@ class Guest(XMLBuilder):
             log.warning(  # pragma: no cover
                     "KVM acceleration not available, using '%s'", self.type)
 
-    def sync_vcpus_topology(self):
+    def refresh_machine_type(self):
+        """
+        Reset the guests's machine type to the latest 'canonical' machine
+        name that qemu reports. So if my VM is using ancient pc-0.11, we
+        try to turn that into just `pc`
+
+        The algorithm here is to fetch all machine types that are aliases
+        for a stable name (like pc -> pc-i440fx-6.2), and see if our current
+        machine type uses alias as a prefix. This is the format that qemu
+        uses for its stable machine type names.
+        """
+        # We need to unset the machine type first, so we can perform
+        # a successful capsinfo lookup, otherwise we will error when qemu
+        # has deprecated and removed the old machine type
+        original_machine_type = self.os.machine or ""
+        self.os.machine = None
+
+        capsinfo = self.lookup_capsinfo()
+        mobjs = (capsinfo.domain and
+                 capsinfo.domain.machines) or capsinfo.guest.machines
+        canonical_names = [m.name for m in mobjs if m.canonical]
+
+        for machine_alias in canonical_names:
+            if machine_alias == "pc":
+                prefix = "pc-i440fx-"
+            elif machine_alias == "q35":
+                prefix = "pc-q35-"
+            else:
+                # Example: pseries-X, virt-X, s390-ccw-virtio-X
+                prefix = machine_alias + "-"
+
+            if original_machine_type.startswith(prefix):
+                self.os.machine = machine_alias
+                return
+        raise Exception("Don't know how to refresh machine type '%s'" %
+                original_machine_type)
+
+    def set_smbios_serial_cloudinit(self):
+        if (not self.conn.is_qemu() and
+            not self.conn.is_test()):
+            return  # pragma: no cover
+        if (not self.os.is_x86() and
+            not self.os.is_arm_machvirt()):
+            return  # pragma: no cover
+        if self.os.smbios_mode not in [None, "sysinfo"]:
+            return
+
+        sysinfos = [s for s in self.sysinfo if s.type == "smbios"]
+        if not sysinfos:
+            sysinfos = [self.sysinfo.add_new()]
+        sysinfo = sysinfos[0]
+
+        if sysinfo.system_serial:
+            return
+        self.os.smbios_mode = "sysinfo"
+        sysinfo.type = "smbios"
+        sysinfo.system_serial = "ds=nocloud"
+
+    def sync_vcpus_topology(self, defCPUs):
         """
         <cpu> topology count and <vcpus> always need to match. Handle
         the syncing here since we are less constrained then doing it
         in CPU set_defaults
         """
-        if not self.cpu.has_topology():
-            return
         if not self.vcpus:
-            self.vcpus = self.cpu.vcpus_from_topology()
+            if self.cpu.has_topology():
+                self.vcpus = self.cpu.vcpus_from_topology()
+            else:
+                self.vcpus = defCPUs
         self.cpu.set_topology_defaults(self.vcpus)
 
     def set_defaults(self, _guest):
@@ -707,12 +781,7 @@ class Guest(XMLBuilder):
         if not self.uuid:
             self.uuid = Guest.generate_uuid(self.conn)
 
-        self.sync_vcpus_topology()
-        if not self.vcpus:
-            # Typically if omitted libvirt will fill this value in for us
-            # However if user specified cpuset= or placement=, libvirt
-            # will error if <vcpus>X is also unset. So keep this for safety
-            self.vcpus = 1
+        self.sync_vcpus_topology(1)
 
         self._set_default_machine()
         self._set_default_uefi()
@@ -725,6 +794,7 @@ class Guest(XMLBuilder):
         self._add_default_channels()
         self._add_default_rng()
         self._add_default_memballoon()
+        self._add_default_tpm()
 
         self.clock.set_defaults(self)
         self.cpu.set_defaults(self)
@@ -738,7 +808,8 @@ class Guest(XMLBuilder):
         for dev in self.devices.get_all():
             dev.set_defaults(self)
 
-        self._add_implied_controllers()
+        self._add_virtioscsi_controller()
+        self._add_q35_pcie_controllers()
         self._add_spice_devices()
 
     def add_extra_drivers(self, extra_drivers):
@@ -766,6 +837,27 @@ class Guest(XMLBuilder):
         default = capsinfo.machines and capsinfo.machines[0] or None
         self.os.machine = default
 
+    def _lookup_default_uefi_path(self):
+        """
+        If a default UEFI firmware path is found, return it,
+        otherwise raise an error
+        """
+        domcaps = self.lookup_domcaps()
+
+        if not domcaps.supports_uefi_loader():
+            raise RuntimeError(_("Libvirt version does not support UEFI."))
+
+        if not domcaps.arch_can_uefi():
+            raise RuntimeError(  # pragma: no cover
+                _("Don't know how to setup UEFI for arch '%s'") %
+                self.os.arch)
+
+        path = domcaps.find_uefi_path_for_arch()
+        if not path:  # pragma: no cover
+            raise RuntimeError(_("Did not find any UEFI binary path for "
+                "arch '%s'") % self.os.arch)
+
+        return path
 
     def _set_default_uefi(self):
         use_default_uefi = (self.prefers_uefi() and
@@ -775,18 +867,17 @@ class Guest(XMLBuilder):
             self.os.nvram is None and
             self.os.firmware is None)
 
-        if use_default_uefi or self.uefi_requested:
-            try:
-                path = self.get_uefi_path()
-                log.debug("Setting UEFI path=%s", path)
-                self.set_uefi_path(path)
-            except RuntimeError as e:
-                if self.uefi_requested:
-                    raise
-                log.debug("Error setting UEFI default",
-                    exc_info=True)
-                log.warning("Couldn't configure UEFI: %s", e)
-                log.warning("Your VM may not boot successfully.")
+        if not use_default_uefi and not self.uefi_requested:
+            return
+
+        try:
+            self.enable_uefi()
+        except RuntimeError as e:
+            if self.uefi_requested:
+                raise
+            log.debug("Error setting UEFI default", exc_info=True)
+            log.warning("Couldn't configure UEFI: %s", e)
+            log.warning("Your VM may not boot successfully.")
 
     def _usb_disabled(self):
         controllers = [c for c in self.devices.controller if
@@ -808,7 +899,7 @@ class Guest(XMLBuilder):
         usb_tablet = False
         usb_keyboard = False
         if self.os.is_x86() and not self.os.is_xenpv():
-            usb_tablet = self.osinfo.supports_usbtablet()
+            usb_tablet = True
         if (self.os.is_arm_machvirt() or
             self.os.is_riscv_virt() or
             self.os.is_pseries()):
@@ -844,7 +935,14 @@ class Guest(XMLBuilder):
             return
 
         dev = DeviceConsole(self.conn)
-        dev.type = dev.TYPE_PTY
+        if self.conn.is_bhyve():
+            nmdm_dev_prefix = '/dev/nmdm{}'.format(self.generate_uuid(self.conn))
+            dev.type = dev.TYPE_NMDM
+            dev.source.master = nmdm_dev_prefix + 'A'
+            dev.source.slave = nmdm_dev_prefix + 'B'
+        else:
+            dev.type = dev.TYPE_PTY
+
         if self.os.is_s390x():
             dev.target_type = "sclp"
         self.add_device(dev)
@@ -917,7 +1015,8 @@ class Guest(XMLBuilder):
             return
         if self.os.is_container() and not self.conn.is_vz():
             return
-        if self.os.arch not in ["x86_64", "i686", "ppc64", "ppc64le"]:
+        if (not self.os.is_x86() and
+            not self.os.is_pseries()):
             return
         self.add_device(DeviceGraphics(self.conn))
 
@@ -941,6 +1040,27 @@ class Guest(XMLBuilder):
             dev.device = "/dev/urandom"
             self.add_device(dev)
 
+    def _add_default_tpm(self):
+        if self.skip_default_tpm:
+            return
+        if self.devices.tpm:
+            return
+
+        # If the guest is using UEFI, we take that as a
+        # flag that the VM is targeting a modern platform
+        # and thus we should also provide an emulated TPM.
+        if not self.is_uefi():
+            return
+
+        if not self.lookup_domcaps().supports_tpm_emulator():
+            log.debug("Domain caps doesn't report TPM support")
+            return
+
+        log.debug("Adding default TPM")
+        dev = DeviceTpm(self.conn)
+        dev.type = DeviceTpm.TYPE_EMULATOR
+        self.add_device(dev)
+
     def _add_default_memballoon(self):
         if self.devices.memballoon:
             return
@@ -962,17 +1082,49 @@ class Guest(XMLBuilder):
             dev.model = "virtio"
             self.add_device(dev)
 
-    def _add_implied_controllers(self):
-        # Add virtio-scsi controller if needed
-        if self.can_default_virtioscsi():
-            for dev in self.devices.disk:
-                if dev.bus == "scsi":
-                    ctrl = DeviceController(self.conn)
-                    ctrl.type = "scsi"
-                    ctrl.model = "virtio-scsi"
-                    ctrl.set_defaults(self)
-                    self.add_device(ctrl)
-                    break
+    def _add_virtioscsi_controller(self):
+        if not self.can_default_virtioscsi():
+            return
+        if not any([d for d in self.devices.disk if d.bus == "scsi"]):
+            return
+
+        ctrl = DeviceController(self.conn)
+        ctrl.type = "scsi"
+        ctrl.model = "virtio-scsi"
+        ctrl.set_defaults(self)
+        self.add_device(ctrl)
+
+    def defaults_to_pcie(self):
+        if self.os.is_q35():
+            return True
+        if self.os.is_arm_machvirt():
+            return True
+        if self.os.is_riscv_virt():
+            return True
+        return False
+
+    def _add_q35_pcie_controllers(self):
+        if any([c for c in self.devices.controller if c.type == "pci"]):
+            return
+        if not self.defaults_to_pcie():
+            return
+
+        added = False
+        log.debug("Using num_pcie_root_ports=%s", self.num_pcie_root_ports)
+        for dummy in range(max(self.num_pcie_root_ports, 0)):
+            if not added:
+                # Libvirt forces pcie-root to come first
+                ctrl = DeviceController(self.conn)
+                ctrl.type = "pci"
+                ctrl.model = "pcie-root"
+                ctrl.set_defaults(self)
+                self.add_device(ctrl)
+                added = True
+            ctrl = DeviceController(self.conn)
+            ctrl.type = "pci"
+            ctrl.model = "pcie-root-port"
+            ctrl.set_defaults(self)
+            self.add_device(ctrl)
 
     def _add_spice_channels(self):
         if self.skip_default_channel:

@@ -65,11 +65,6 @@ def createVol(conn, poolobj, volname=None, input_vol=None, clone_vol=None):
     if volname is None:
         volname = poolobj.name() + "-vol"
 
-    # Format here depends on libvirt-1.2.0 and later
-    if clone_vol and conn.local_libvirt_version() < 1002000:
-        log.debug("skip clone compare")
-        return
-
     alloc = 5 * 1024 * 1024 * 1024
     cap = 10 * 1024 * 1024 * 1024
     vol_inst = StorageVolume(conn)
@@ -91,6 +86,12 @@ def createVol(conn, poolobj, volname=None, input_vol=None, clone_vol=None):
 
     vol_inst.validate()
     filename = os.path.join(BASEPATH, vol_inst.name + ".xml")
+
+    # Format here depends on libvirt-7.2.0 and later
+    if clone_vol and conn.local_libvirt_version() < 7002000:
+        log.debug("skip clone compare")
+        return
+
     utils.diff_compare(vol_inst.get_xml(), filename)
     return vol_inst.install(meter=False)
 
@@ -102,7 +103,7 @@ def createVol(conn, poolobj, volname=None, input_vol=None, clone_vol=None):
 def testDirPool():
     conn = utils.URIs.open_testdefault_cached()
     poolobj = createPool(conn,
-                         StoragePool.TYPE_DIR, "pool-dir")
+                         StoragePool.TYPE_DIR, "pool-dir2")
     invol = createVol(conn, poolobj)
     createVol(conn, poolobj,
               volname=invol.name() + "input", input_vol=invol)
@@ -216,8 +217,8 @@ def testMisc():
     assert vol.is_size_conflict()[0] is False
 
     fullconn = utils.URIs.open_testdriver_cached()
-    glusterpool = fullconn.storagePoolLookupByName("gluster-pool")
-    diskpool = fullconn.storagePoolLookupByName("disk-pool")
+    glusterpool = fullconn.storagePoolLookupByName("pool-gluster")
+    diskpool = fullconn.storagePoolLookupByName("pool-logical")
 
     glustervol = StorageVolume(fullconn)
     glustervol.pool = glusterpool
@@ -231,8 +232,8 @@ def testMisc():
     StoragePool.ensure_pool_is_running(glusterpool)
 
     # Check pool collision detection
-    name = StoragePool.find_free_name(fullconn, "gluster-pool")
-    assert name == "gluster-pool-1"
+    name = StoragePool.find_free_name(fullconn, "pool-gluster")
+    assert name == "pool-gluster-1"
 
 
 def testEnumerateLogical():

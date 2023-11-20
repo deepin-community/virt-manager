@@ -40,9 +40,9 @@ class _DistroCache(object):
         if path not in self._filecache:
             try:
                 content = self._fetcher.acquireFileContent(path)
-            except ValueError:
+            except ValueError as e:
                 content = None
-                log.debug("Failed to acquire file=%s", path)
+                log.debug("Failed to acquire file=%s: %s", path, e)
             self._filecache[path] = content
         return self._filecache[path]
 
@@ -141,6 +141,7 @@ class _DistroCache(object):
         update = 0
         version = _safeint(verstr)
         if verstr.count(".") >= 1:
+            # pylint: disable=no-member
             version = _safeint(verstr.split(".")[0])
             update = _safeint(verstr.split(".")[1])
 
@@ -759,8 +760,8 @@ class _DebianDistro(_DistroTree):
 
         if self.cache.debian_media_type == "daily":
             log.debug("Appears to be debian 'daily' URL, using latest "
-                "debian OS")
-            return oses[0].name
+                "debiantesting")
+            return "debiantesting"
 
         for osobj in oses:
             if osobj.codename:

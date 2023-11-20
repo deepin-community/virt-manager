@@ -66,6 +66,7 @@ class _DiskSource(XMLBuilder):
 
     name = XMLProperty("./@name")
     protocol = XMLProperty("./@protocol")
+    query = XMLProperty("./@query")
 
     type = XMLProperty("./@type")
     managed = XMLProperty("./@managed", is_yesno=True)
@@ -98,6 +99,8 @@ class _DiskSource(XMLBuilder):
                 self.name = uriobj.path
                 if self.name.startswith("/"):
                     self.name = self.name[1:]
+        if uriobj.query:
+            self.query = uriobj.query
 
     def build_url_from_network(self):
         """
@@ -192,12 +195,6 @@ class DeviceDisk(Device):
     DISCARD_MODE_IGNORE = "ignore"
     DISCARD_MODE_UNMAP = "unmap"
     DISCARD_MODES = [DISCARD_MODE_IGNORE, DISCARD_MODE_UNMAP]
-
-    DETECT_ZEROES_MODE_OFF = "off"
-    DETECT_ZEROES_MODE_ON = "on"
-    DETECT_ZEROES_MODE_UNMAP = "unmap"
-    DETECT_ZEROES_MODES = [DETECT_ZEROES_MODE_OFF, DETECT_ZEROES_MODE_ON,
-                           DETECT_ZEROES_MODE_UNMAP]
 
     DEVICE_DISK = "disk"
     DEVICE_LUN = "lun"
@@ -429,7 +426,7 @@ class DeviceDisk(Device):
         "_xmltype", "_device", "snapshot_policy",
         "driver_name", "driver_type",
         "driver_cache", "driver_discard", "driver_detect_zeroes",
-        "driver_io", "error_policy",
+        "driver_io", "driver_iothread", "driver_queues", "error_policy",
         "auth_username", "auth_secret_type", "auth_secret_uuid",
         "source",
         "target", "bus",
@@ -471,14 +468,18 @@ class DeviceDisk(Device):
     bus = XMLProperty("./target/@bus")
     target = XMLProperty("./target/@dev")
     removable = XMLProperty("./target/@removable", is_onoff=True)
+    rotation_rate = XMLProperty("./target/@rotation_rate", is_int=True)
 
     read_only = XMLProperty("./readonly", is_bool=True)
     shareable = XMLProperty("./shareable", is_bool=True)
+    transient = XMLProperty("./transient", is_bool=True)
+    transient_shareBacking = XMLProperty("./transient/@shareBacking", is_yesno=True)
     driver_cache = XMLProperty("./driver/@cache")
     driver_discard = XMLProperty("./driver/@discard")
     driver_detect_zeroes = XMLProperty("./driver/@detect_zeroes")
     driver_io = XMLProperty("./driver/@io")
     driver_iothread = XMLProperty("./driver/@iothread", is_int=True)
+    driver_queues = XMLProperty("./driver/@queues", is_int=True)
 
     error_policy = XMLProperty("./driver/@error_policy")
     serial = XMLProperty("./serial")
@@ -612,7 +613,7 @@ class DeviceDisk(Device):
             path = self._get_xmlpath()
 
         if path and not vol_object and not parent_pool:
-            (vol_object, parent_pool) = diskbackend.manage_path(
+            (dummy, vol_object, parent_pool) = diskbackend.manage_path(
                     self.conn, path)
 
         self._change_backend(path, vol_object, parent_pool)
@@ -637,7 +638,8 @@ class DeviceDisk(Device):
 
         # User explicitly changed 'path', so try to lookup its storage
         # object since we may need it
-        (vol_object, parent_pool) = diskbackend.manage_path(self.conn, newpath)
+        (newpath, vol_object, parent_pool) = diskbackend.manage_path(
+                self.conn, newpath)
 
         self._change_backend(newpath, vol_object, parent_pool)
         self._set_xmlpath(self.get_source_path())
@@ -972,6 +974,9 @@ class DeviceDisk(Device):
             return "sd"
         if guest.os.is_q35():
             return "sata"
+        if self.conn.is_bhyve():
+            # IDE bus is not supported by bhyve
+            return "sata"
         return "ide"
 
     def set_defaults(self, guest):
@@ -988,13 +993,26 @@ class DeviceDisk(Device):
         if self.is_cdrom():
             self.read_only = True
 
+        discard_unmap = False
+        if (self.conn.is_qemu() and
+            self.is_disk() and
+            self._storage_backend.will_create_storage() and
+            self._storage_backend.get_vol_install() and
+            self._storage_backend.get_vol_install().allocation == 0):
+            discard_unmap = True
+
         if (self.conn.is_qemu() and
             self.is_disk() and
             self.type == self.TYPE_BLOCK):
+            discard_unmap = True
             if not self.driver_cache:
                 self.driver_cache = self.CACHE_MODE_NONE
             if not self.driver_io:
                 self.driver_io = self.IO_MODE_NATIVE
+
+        if discard_unmap:
+            if not self.driver_discard:
+                self.driver_discard = "unmap"
 
         if not self.target:
             used_targets = [d.target for d in guest.devices.disk if d.target]

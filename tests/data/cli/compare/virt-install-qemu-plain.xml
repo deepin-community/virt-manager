@@ -9,9 +9,8 @@
   <memory>65536</memory>
   <currentMemory>65536</currentMemory>
   <vcpu>2</vcpu>
-  <os>
-    <type arch="x86_64" machine="pc">hvm</type>
-    <loader readonly="yes" type="pflash">/usr/share/OVMF/OVMF_CODE.fd</loader>
+  <os firmware="efi">
+    <type arch="x86_64" machine="pc-i440fx-6.1">hvm</type>
     <boot dev="cdrom"/>
   </os>
   <features>
@@ -20,6 +19,10 @@
   </features>
   <cpu mode="custom" match="exact">
     <model>Penryn</model>
+    <feature policy="require" name="ibpb"/>
+    <feature policy="require" name="md-clear"/>
+    <feature policy="require" name="spec-ctrl"/>
+    <feature policy="require" name="ssbd"/>
   </cpu>
   <clock offset="utc">
     <timer name="rtc" tickpolicy="catchup"/>
@@ -49,6 +52,9 @@
     </interface>
     <console type="pty"/>
     <input type="tablet" bus="usb"/>
+    <tpm model="tpm-crb">
+      <backend type="emulator"/>
+    </tpm>
     <graphics type="vnc" port="-1"/>
     <video>
       <model type="bochs"/>
