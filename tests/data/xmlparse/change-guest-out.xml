@@ -11,13 +11,13 @@
   <os>
     <type machine="pc-0.11">xen</type>
     <loader>/foo/loader</loader>
-    <boot dev="fd"/>
     <init>/sbin/init</init>
-    <bootmenu enable="no"/>
-    <bios useserial="yes"/>
     <initarg>foo</initarg>
     <initarg>bar baz</initarg>
     <initarg>frib</initarg>
+    <boot dev="fd"/>
+    <bootmenu enable="no" timeout="30000"/>
+    <bios useserial="yes" rebootTimeout="-1"/>
   </os>
   <features>
     <apic eoi="on"/>
@@ -32,6 +32,7 @@
       <hidden state="on"/>
     </kvm>
     <pvspinlock state="on"/>
+    <ioapic driver="qemu"/>
   </features>
   <numatune>
     <memory nodeset="2,4,6"/>
@@ -62,7 +63,7 @@
     <emulator>/usr/binnnn/fooemu</emulator>
     <disk type="file" device="floppy">
       <driver name="qemu" type="qcow2"/>
-      <source file="/dev/default-pool/testvol1.img"/>
+      <source file="/pool-dir/testvol1.img"/>
       <target dev="fda" bus="fdc"/>
     </disk>
     <disk type="file" device="disk">

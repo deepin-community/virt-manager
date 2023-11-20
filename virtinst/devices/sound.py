@@ -22,6 +22,7 @@ class DeviceSound(Device):
 
     model = XMLProperty("./@model")
     codecs = XMLChildProperty(_Codec)
+    audio_id = XMLProperty("./audio/@id")
 
 
     ##################
@@ -30,7 +31,7 @@ class DeviceSound(Device):
 
     @staticmethod
     def default_model(guest):
-        if guest.os.is_q35():
+        if guest.defaults_to_pcie():
             return "ich9"
         return "ich6"
 

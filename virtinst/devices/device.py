@@ -17,6 +17,7 @@ class DeviceVirtioDriver(XMLBuilder):
     ats = XMLProperty("./@ats", is_onoff=True)
     iommu = XMLProperty("./@iommu", is_onoff=True)
     packed = XMLProperty("./@packed", is_onoff=True)
+    page_per_vq = XMLProperty("./@page_per_vq", is_onoff=True)
 
 
 class DeviceSeclabel(XMLBuilder):
@@ -148,6 +149,7 @@ class Device(XMLBuilder):
             "tpm":           ["type", "xmlindex"],
             "rng":           ["backend_model", "xmlindex"],
             "panic":         ["model", "xmlindex"],
+            "shmem":         ["name", "xmlindex"],
             "vsock":         ["model", "xmlindex"],
             "memballoon":    ["model", "xmlindex"],
             "iommu":         ["model", "xmlindex"],

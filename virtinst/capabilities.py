@@ -8,7 +8,6 @@
 
 import pwd
 
-from .domain import DomainCpu
 from .logger import log
 from .xmlbuilder import XMLBuilder, XMLChildProperty, XMLProperty
 
@@ -17,27 +16,10 @@ from .xmlbuilder import XMLBuilder, XMLChildProperty, XMLProperty
 # capabilities host <cpu> parsing #
 ###################################
 
-class _CapsCPU(DomainCpu):
-    arch = XMLProperty("./arch")
-
-
-###########################
-# Caps <topology> parsers #
-###########################
-
-class _CapsTopologyCPU(XMLBuilder):
+class _CapsCPU(XMLBuilder):
     XML_NAME = "cpu"
-    id = XMLProperty("./@id")
-
-
-class _TopologyCell(XMLBuilder):
-    XML_NAME = "cell"
-    cpus = XMLChildProperty(_CapsTopologyCPU, relative_xpath="./cpus")
-
-
-class _CapsTopology(XMLBuilder):
-    XML_NAME = "topology"
-    cells = XMLChildProperty(_TopologyCell, relative_xpath="./cells")
+    arch = XMLProperty("./arch")
+    model = XMLProperty("./model")
 
 
 ######################################
@@ -60,7 +42,6 @@ class _CapsHost(XMLBuilder):
     XML_NAME = "host"
     secmodels = XMLChildProperty(_CapsSecmodel)
     cpu = XMLChildProperty(_CapsCPU, is_single=True)
-    topology = XMLChildProperty(_CapsTopology, is_single=True)
 
     def get_qemu_baselabel(self):
         for secmodel in self.secmodels:
@@ -148,6 +129,16 @@ class _CapsGuest(XMLBuilder):
                 ret.append(m.canonical)
         return ret
 
+    def is_machine_alias(self, domain, src, tgt):
+        """
+        Determine if machine @src is an alias for machine @tgt
+        """
+        mobjs = (domain and domain.machines) or self.machines
+        for m in mobjs:
+            if m.name == src and m.canonical == tgt:
+                return True
+        return False
+
     def is_kvm_available(self):
         """
         Return True if kvm guests can be installed
@@ -197,6 +188,9 @@ class _CapsInfo(object):
 
         self.emulator = self.domain.emulator or self.guest.emulator
         self.machines = self.guest.all_machine_names(self.domain)
+
+    def is_machine_alias(self, src, tgt):
+        return self.guest.is_machine_alias(self.domain, src, tgt)
 
 
 class Capabilities(XMLBuilder):

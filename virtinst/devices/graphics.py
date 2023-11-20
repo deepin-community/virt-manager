@@ -129,14 +129,6 @@ class DeviceGraphics(Device):
     # Default config #
     ##################
 
-    def _spice_supported(self):
-        if not self.conn.is_qemu() and not self.conn.is_test():
-            return False
-        # Spice has issues on some host arches, like ppc, so allow it
-        if self.conn.caps.host.cpu.arch not in ["i686", "x86_64"]:
-            return False
-        return True
-
     def _listen_need_port(self):
         listen = self.get_first_listen_type()
         return not listen or listen in ["address", "network"]
@@ -162,10 +154,17 @@ class DeviceGraphics(Device):
 
     def _default_type(self, guest):
         gtype = guest.default_graphics_type
-        log.debug("Using default_graphics=%s", gtype)
-        if gtype == "spice" and not self._spice_supported():
-            log.debug("spice requested but HV doesn't support it. "
-                          "Using vnc.")
+        log.debug("App is configured with default_graphics=%s", gtype)
+
+        if self.conn.is_xen():
+            # Xen domcaps can advertise spice support, but we have historically
+            # not defaulted to it for xen, so force vnc.
+            log.debug("Not defaulting to spice for xen driver. Using vnc.")
+            gtype = "vnc"
+
+        if (gtype == "spice" and
+            not guest.lookup_domcaps().supports_graphics_spice()):
+            log.debug("spice requested but HV doesn't support it. Using vnc.")
             gtype = "vnc"
         return gtype
 

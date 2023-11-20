@@ -3,8 +3,6 @@
 
 import unittest.mock
 
-import pytest
-
 import tests
 from . import lib
 
@@ -78,13 +76,13 @@ def testNewVMMultiConnection(app):
         return app.manager_createconn(uri)
 
     # Test empty qemu connection
-    _add_conn(tests.utils.URIs.kvm + _capsopt("test-empty.xml"))
+    _add_conn(tests.utils.URIs.kvm_x86 + _capsopt("test-empty.xml"))
     newvm = _open_newvm(app)
     newvm.find(".*No hypervisor options were found.*KVM kernel modules.*")
     newvm.window_close()
     app.manager_conn_disconnect("QEMU/KVM")
 
-    _add_conn(tests.utils.URIs.kvm_session +
+    _add_conn(tests.utils.URIs.kvm_x86_session +
             _capsopt("test-qemu-no-kvm.xml"))
     newvm = _open_newvm(app)
     newvm.find(".*KVM is not available.*")
@@ -107,7 +105,7 @@ def testNewVMMultiConnection(app):
     entry.click()
     # Launch this so we can verify storage browser is reset too
     newvm.find_fuzzy("install-iso-browse", "button").click()
-    app.select_storagebrowser_volume("default-pool", "iso-vol")
+    app.select_storagebrowser_volume("pool-dir", "iso-vol")
     newvm.find_fuzzy("Automatically detect", "check").click()
     newvm.find("oslist-entry").set_text("generic")
     newvm.find("oslist-popover").find_fuzzy("generic").click()
@@ -120,9 +118,10 @@ def testNewVMMultiConnection(app):
     _forward(newvm)
     cdrom.click_combo_entry()
     lib.utils.check(lambda: "/dev/sr1" not in cdrom.fmt_nodes())
+    app.rawinput.pressKey("Escape")
     newvm.find_fuzzy("install-iso-browse", "button").click()
     browsewin = app.root.find("vmm-storage-browser")
-    lib.utils.check(lambda: "disk-pool" not in browsewin.fmt_nodes())
+    lib.utils.check(lambda: "pool-logical" not in browsewin.fmt_nodes())
 
 
 def testNewVMManualDefault(app):
@@ -147,7 +146,7 @@ def testNewVMManualDefault(app):
     newvm.find("oslist-popover")
     osentry.click()
     app.rawinput.pressKey("Enter")
-    lib.utils.check(lambda: osentry.text == "Generic OS")
+    lib.utils.check(lambda: "Generic" in osentry.text)
 
     # Verify back+forward still keeps Generic selected
     _back(newvm)
@@ -257,7 +256,7 @@ def testNewVMCDROMRegular(app):
 
     # Select a fake iso
     newvm.find_fuzzy("install-iso-browse", "button").click()
-    app.select_storagebrowser_volume("default-pool", "iso-vol")
+    app.select_storagebrowser_volume("pool-dir", "iso-vol")
 
     osentry = newvm.find("oslist-entry")
     lib.utils.check(lambda: osentry.text == "None detected")
@@ -311,8 +310,10 @@ def testNewVMCDROMRegular(app):
 
     # Change to 'copy host CPU'
     vmwindow.find_fuzzy("CPUs", "table cell").click()
-    vmwindow.find_fuzzy("Copy host", "check").click()
+    cpucheck = vmwindow.find_fuzzy("Copy host", "check")
+    cpucheck.click()
     vmwindow.find_fuzzy("config-apply").click()
+    lib.utils.check(lambda: "host-passthrough" in cpucheck.name)
 
     # Add a default disk
     vmwindow.find("add-hardware", "push button").click()
@@ -377,7 +378,8 @@ def testNewVMURL(app):
     New VM with URL and distro detection, plus having fun with
     the storage browser and network selection.
     """
-    app.uri = tests.utils.URIs.kvm
+    # Also test default UEFI from prefs
+    app.open(keyfile="uefi.ini", uri=tests.utils.URIs.kvm_x86)
     newvm = _open_newvm(app)
 
     newvm.find_fuzzy("Network Install", "radio").click()
@@ -450,16 +452,15 @@ def testNewKVMQ35Tweaks(app):
     """
     New VM that should default to Q35, but tweak things a bunch
     """
-    app.uri = tests.utils.URIs.kvm
+    app.uri = tests.utils.URIs.kvm_x86
     newvm = _open_newvm(app)
 
     newvm.find_fuzzy("Import", "radio").click()
     _forward(newvm)
-    newvm.find("import-entry").set_text("/dev/default-pool/testvol1.img")
-    newvm.find("oslist-entry").set_text("fedora30")
+    newvm.find("import-entry").set_text("/pool-dir/testvol1.img")
+    newvm.find("oslist-entry").set_text("fribfrob")
     popover = newvm.find("oslist-popover")
-    popover.find("include-eol").click()
-    popover.find_fuzzy("Fedora 30").click()
+    popover.find_fuzzy("linux2020").click()
     _forward(newvm)
     _forward(newvm)
 
@@ -467,7 +468,7 @@ def testNewKVMQ35Tweaks(app):
     # hit some code paths elsewhere
     newvm.find_fuzzy("Customize", "check").click()
     newvm.find_fuzzy("Finish", "button").click()
-    vmname = "fedora30"
+    vmname = "linux2020"
     details = app.find_details_window(vmname)
     appl = details.find("config-apply")
 
@@ -495,6 +496,13 @@ def testNewKVMQ35Tweaks(app):
     appl.click()
     lib.utils.check(lambda: not appl.sensitive)
 
+    # Verify host-passthrough selected
+    details.find_fuzzy("CPUs", "table cell").click()
+    cpucheck = details.find_fuzzy("Copy host", "check")
+    assert "host-passthrough" in cpucheck.name
+    new_xml = lib.utils.get_xmleditor_xml(app, details)
+    assert "host-passthrough" in new_xml
+
     # Add another network device
     details.find("add-hardware", "push button").click()
     addhw = app.find_window("Add New Virtual Hardware")
@@ -515,12 +523,12 @@ def testNewKVMQ35UEFI(app):
     """
     New VM that should default to Q35, and set UEFI
     """
-    app.uri = tests.utils.URIs.kvm
+    app.uri = tests.utils.URIs.kvm_x86
     newvm = _open_newvm(app)
 
     newvm.find_fuzzy("Import", "radio").click()
     _forward(newvm)
-    newvm.find("import-entry").set_text("/dev/default-pool/testvol1.img")
+    newvm.find("import-entry").set_text("/pool-dir/testvol1.img")
     newvm.find("oslist-entry").set_text("fedora30")
     popover = newvm.find("oslist-popover")
     popover.find("include-eol").click()
@@ -538,8 +546,10 @@ def testNewKVMQ35UEFI(app):
     # Change to UEFI
     details.combo_check_default("Chipset:", "Q35")
     details.combo_check_default("Firmware:", "BIOS")
-    details.combo_select("Firmware:", ".*x86_64.*")
+    details.combo_select("Firmware:", "UEFI")
     details.find("config-apply").click()
+    new_xml = lib.utils.get_xmleditor_xml(app, details)
+    assert "os firmware=\"efi\"" in new_xml
 
     # Finish
     details.find_fuzzy("Begin Installation", "button").click()
@@ -551,7 +561,7 @@ def testNewPPC64(app):
     """
     New PPC64 VM to test architecture selection
     """
-    app.uri = tests.utils.URIs.kvm
+    app.uri = tests.utils.URIs.kvm_x86
     newvm = _open_newvm(app)
 
     newvm.find_fuzzy("Architecture options", "toggle").click()
@@ -621,7 +631,7 @@ def testNewVMAArch64UEFI(app):
     newvm.find_fuzzy("Automatically detect", "check").click()
     newvm.find("oslist-entry").set_text("generic")
     newvm.find("oslist-popover").find_fuzzy("generic").click()
-    newvm.find("media-entry").set_text("/dev/default-pool/testvol1.img")
+    newvm.find("media-entry").set_text("/pool-dir/testvol1.img")
     _forward(newvm)
     _forward(newvm)
     # Disable storage, this triggers a livecd code path in createvm.py
@@ -660,7 +670,7 @@ def testNewVMArmKernel(app):
     lib.utils.check(lambda: importradio.checked)
     _forward(newvm)
 
-    newvm.find("import-entry").set_text("/dev/default-pool/default-vol")
+    newvm.find("import-entry").set_text("/pool-dir/default-vol")
     # Make sure the info box shows up
     newvm.find("Kernel/initrd settings can be configured")
     newvm.find("oslist-entry").set_text("generic")
@@ -694,7 +704,7 @@ def testNewVMContainerApp(app):
     _forward(newvm, check=False)
     app.click_alert_button("path is required", "OK")
     newvm.find("install-app-browse").click()
-    app.select_storagebrowser_volume("default-pool", "aaa-unused.qcow2")
+    app.select_storagebrowser_volume("pool-dir", "aaa-unused.qcow2")
     lib.utils.check(lambda: "aaa-unused.qcow2" in apptext.text)
 
     _forward(newvm)
@@ -836,7 +846,7 @@ def testNewVMContainerTree(app):
     app.click_alert_button("path is required", "OK")
 
     newvm.find("install-oscontainer-browse").click()
-    app.select_storagebrowser_volume("default-pool", "dir-vol")
+    app.select_storagebrowser_volume("pool-dir", "dir-vol")
     lib.utils.check(lambda: "dir-vol" in dirtext.text)
 
     _forward(newvm)
@@ -876,11 +886,8 @@ def testNewVMContainerVZ(app):
 
 
 def testNewVMContainerBootstrap(app):
-    app.uri = tests.utils.URIs.lxc
-    try:
-        import virtBootstrap  # pylint: disable=unused-import
-    except ImportError:
-        pytest.skip("virtBootstrap not installed")
+    app.open(uri=tests.utils.URIs.lxc,
+            extra_opts=["--test-options=fake-virtbootstrap"])
 
     newvm = _open_newvm(app)
     newvm.find_fuzzy("Operating system", "radio").click()
@@ -949,7 +956,7 @@ def testNewVMXenPV(app):
 
     newvm.find_fuzzy("Import", "radio").click()
     _forward(newvm)
-    newvm.find("import-entry").set_text("/dev/default-pool/testvol1.img")
+    newvm.find("import-entry").set_text("/pool-dir/testvol1.img")
     newvm.find("oslist-entry").set_text("generic")
     newvm.find("oslist-popover").find_fuzzy("generic").click()
     _forward(newvm)
@@ -995,7 +1002,7 @@ def testNewVMInstallFail(app):
     _back(newvm)
     newvm.find_fuzzy("Select or create", "radio").click()
 
-    newvm.find("storage-entry").set_text("/dev/default-pool/somenewvol1")
+    newvm.find("storage-entry").set_text("/pool-dir/somenewvol1")
     _forward(newvm)
     newvm.find_fuzzy("Name", "text").set_text("test-foo")
     newvm.find_fuzzy("Finish", "button").click()
@@ -1017,7 +1024,7 @@ def testNewVMCustomizeXMLEdit(app):
     newvm.find_fuzzy("Local install media", "radio").click()
     newvm.find_fuzzy("Forward", "button").click()
     nonexistpath = "/dev/foovmm-idontexist"
-    existpath = "/dev/default-pool/testvol1.img"
+    existpath = "/pool-dir/testvol1.img"
     newvm.find("media-entry").set_text(nonexistpath)
     lib.utils.check(
             lambda: newvm.find("oslist-entry").text == "None detected")
@@ -1128,10 +1135,10 @@ def testNewVMRemote(app):
     app.click_alert_button("import is required", "OK")
 
     # Click forward, but Import path doesn't exist
-    importtext.set_text("/dev/default-pool/idontexist")
+    importtext.set_text("/pool-dir/idontexist")
     _forward(newvm, check=False)
     app.click_alert_button("import path must point", "OK")
-    importtext.set_text("/dev/default-pool/default-vol")
+    importtext.set_text("/pool-dir/default-vol")
 
     # Click forward, hitting missing OS error
     _forward(newvm, check=False)
@@ -1156,9 +1163,9 @@ def testNewVMRemote(app):
     lib.utils.check(lambda: not browsewin.active)
     # Reopen, select storage
     newvm.find("install-import-browse").click()
-    app.select_storagebrowser_volume("default-pool", "bochs-vol")
+    app.select_storagebrowser_volume("pool-dir", "bochs-vol")
     lib.utils.check(
-            lambda: importtext.text == "/dev/default-pool/bochs-vol")
+            lambda: importtext.text == "/pool-dir/bochs-vol")
 
     _forward(newvm)
     _forward(newvm)
@@ -1172,12 +1179,12 @@ def testNewVMSession(app):
     """
     Test with fake qemu session
     """
-    app.uri = tests.utils.URIs.kvm_session
+    app.uri = tests.utils.URIs.kvm_x86_session
     newvm = _open_newvm(app)
 
     newvm.find_fuzzy("Import", "radio").click()
     _forward(newvm)
-    newvm.find("import-entry").set_text("/dev/default-pool/testvol1.img")
+    newvm.find("import-entry").set_text("/pool-dir/testvol1.img")
     newvm.find("oslist-entry").set_text("generic")
     newvm.find("oslist-popover").find_fuzzy("generic").click()
     _forward(newvm)
@@ -1289,3 +1296,24 @@ def testNewVMDefaultBridge(app):
     newvm.find_fuzzy("Finish", "button").click()
     app.find_details_window("vm1")
     lib.utils.check(lambda: not newvm.showing)
+
+
+@unittest.mock.patch.dict('os.environ',
+        {"VIRTINST_TEST_SUITE_FAKE_NO_SPICE": "1"})
+def testCreateVMMissingSpice(app):
+    newvm = _open_newvm(app)
+
+    newvm.find_fuzzy("Import", "radio").click()
+    _forward(newvm)
+    newvm.find("import-entry").set_text("/pool-dir/testvol1.img")
+    newvm.find("oslist-entry").set_text("generic")
+    newvm.find("oslist-popover").find_fuzzy("generic").click()
+    _forward(newvm)
+    _forward(newvm)
+
+    newvm.find_fuzzy("Finish", "button").click()
+    details = app.find_details_window("vm1")
+    lib.utils.check(lambda: not newvm.showing)
+
+    details.find_fuzzy("test suite faking no spice")
+    details.window_close()

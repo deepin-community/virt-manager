@@ -7,7 +7,7 @@
 # End local config
 
 Name: virt-manager
-Version: 3.2.0
+Version: 4.1.0
 Release: 1%{?dist}
 %global verrel %{version}-%{release}
 
@@ -19,8 +19,8 @@ Source0: https://virt-manager.org/download/sources/%{name}/%{name}-%{version}.ta
 
 
 Requires: virt-manager-common = %{verrel}
-Requires: python3-gobject
-Requires: gtk3
+Requires: python3-gobject >= 3.31.3
+Requires: gtk3 >= 3.22.0
 Requires: libvirt-glib >= 0.0.9
 Requires: gtk-vnc2
 Requires: spice-gtk3
@@ -52,6 +52,7 @@ Suggests: python3-libguestfs
 BuildRequires: gettext
 BuildRequires: python3-devel
 BuildRequires: python3-docutils
+BuildRequires: python3-setuptools
 
 
 %description
@@ -72,8 +73,8 @@ Requires: python3-requests
 Requires: libosinfo >= 0.2.10
 # Required for gobject-introspection infrastructure
 Requires: python3-gobject-base
-# Required for pulling files from iso media with isoinfo
-Requires: genisoimage
+# Required for pulling files from iso media
+Requires: xorriso
 
 %description common
 Common files used by the different virt-manager interfaces, as well as
@@ -98,7 +99,7 @@ machine).
 
 
 %prep
-%setup -q
+%autosetup -p1
 
 
 %build
@@ -118,19 +119,12 @@ machine).
 
 %if 0%{?py_byte_compile:1}
 # https://docs.fedoraproject.org/en-US/packaging-guidelines/Python_Appendix/#manual-bytecompilation
-%py_byte_compile %{python3} %{buildroot}%{_datadir}/virt-manager/
+%py_byte_compile %{__python3} %{buildroot}%{_datadir}/virt-manager/
 %endif
 
-# Replace '#!/usr/bin/env python3' with '#!/usr/bin/python3'
-# The format is ideal for upstream, but not a distro. See:
-# https://fedoraproject.org/wiki/Features/SystemPythonExecutablesUseSystemPython
-for f in $(find %{buildroot} -type f -executable -print); do
-    sed -i "1 s|^#!/usr/bin/env python3|#!%{__python3}|" $f || :
-done
 
 
 %files
-%doc README.md COPYING NEWS.md
 %{_bindir}/%{name}
 
 %{_mandir}/man1/%{name}.1*
@@ -147,8 +141,10 @@ done
 
 
 %files common -f %{name}.lang
-%dir %{_datadir}/%{name}
+%license COPYING
+%doc README.md NEWS.md
 
+%dir %{_datadir}/%{name}
 %{_datadir}/%{name}/virtinst
 
 

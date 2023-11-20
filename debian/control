@@ -4,28 +4,29 @@ Priority: optional
 Maintainer: Debian Libvirt Maintainers <pkg-libvirt-maintainers@lists.alioth.debian.org>
 Uploaders:
  Guido Günther <agx@sigxcpu.org>,
- Laurent Léonard <laurent@open-minds.org>,
  Pino Toscano <pino@debian.org>,
-Standards-Version: 4.5.1
+Standards-Version: 4.6.1
 Vcs-Git: https://salsa.debian.org/libvirt-team/virt-manager.git
 Vcs-Browser: https://salsa.debian.org/libvirt-team/virt-manager
 Homepage: https://virt-manager.org/
 Build-Depends:
  debhelper-compat (= 13),
  dh-python,
+ dh-sequence-python3,
  gettext,
  python3,
  python3-distutils,
  python3-docutils,
+ python3-setuptools,
 # for the tests
  cpio <!nocheck>,
- genisoimage <!nocheck>,
+ xorriso <!nocheck>,
  gir1.2-libosinfo-1.0 <!nocheck>,
  gir1.2-libvirt-glib-1.0 <!nocheck>,
  libglib2.0-bin <!nocheck>,
  libvirt-daemon <!nocheck>,
  python3-argcomplete <!nocheck>,
- python3-gi <!nocheck>,
+ python3-gi (>= 3.31.3~) <!nocheck>,
  python3-libvirt <!nocheck>,
  python3-libxml2 <!nocheck>,
  python3-pytest <!nocheck>,
@@ -41,8 +42,7 @@ Depends:
  gir1.2-libosinfo-1.0,
  gir1.2-libvirt-glib-1.0,
  gir1.2-vte-2.91,
- python3-dbus,
- python3-gi,
+ python3-gi (>= 3.31.3~),
  python3-gi-cairo,
  python3-libvirt (>= 0.7.1),
  virtinst (= ${binary:Version}),
@@ -72,9 +72,9 @@ Package: virtinst
 Architecture: all
 Depends:
  e2fsprogs,
- genisoimage,
+ xorriso,
  gir1.2-libosinfo-1.0,
- python3-gi,
+ python3-gi (>= 3.31.3~),
  python3-libvirt (>= 0.4.6),
  python3-libxml2,
  python3-requests,

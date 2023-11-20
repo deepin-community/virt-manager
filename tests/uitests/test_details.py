@@ -17,20 +17,28 @@ def _start_vm(win):
     lib.utils.check(lambda: not run.sensitive)
 
 
-def _select_hw(app, win, hwname, tabname):
-    c = win.find(hwname, "table cell")
+def table_cell_click(app, listw, text):
+    """
+    Find the table cell matching 'text'. If it's not on screen,
+    use ctrl+f searching to quickly select it.
+    """
+    c = listw.find(text, "table cell")
     if not c.onscreen:
-        hwlist = win.find("hw-list")
-        hwlist.point()
-        hwlist.click()
+        listw.point()
+        listw.click()
         app.rawinput.keyCombo("<ctrl>f")
         searchwin = app.find_window(None, roleName="window")
         searchentry = searchwin.find(None, "text")
-        searchentry.set_text(hwname)
+        searchentry.set_text(text)
         c.check_onscreen()
         lib.utils.check(lambda: c.state_selected)
         app.rawinput.pressKey("Enter")
     c.click()
+    return c
+
+
+def _select_hw(app, win, hwname, tabname):
+    table_cell_click(app, win.find("hw-list"), hwname)
     tab = win.find(tabname, None)
     lib.utils.check(lambda: tab.showing)
     return tab
@@ -89,7 +97,8 @@ def _testRename(app, win, origname, newname):
     app.root.find_fuzzy(newname, "table cell")
 
     # Make sure the old entry is gone
-    lib.utils.check(lambda: origname not in oldcell.name)
+    if origname != newname:
+        lib.utils.check(lambda: origname not in oldcell.name)
 
 
 def testDetailsRenameSimple(app):
@@ -98,6 +107,7 @@ def testDetailsRenameSimple(app):
     """
     origname = "test-clone-simple"
     win = app.manager_open_details(origname)
+    _testRename(app, win, origname, origname)
     _testRename(app, win, origname, "test-new-name")
 
 
@@ -114,7 +124,7 @@ def testDetailsStateMisc(app):
     """
     Test state changes and unapplied changes warnings
     """
-    app.uri = tests.utils.URIs.kvm
+    app.uri = tests.utils.URIs.kvm_x86
     win = app.manager_open_details("test", shutdown=True)
     fmenu = win.find("File", "menu")
     fmenu.click()
@@ -160,9 +170,9 @@ def testDetailsStateMisc(app):
 
 def testDetailsEditDomain1(app):
     """
-    Test overview, memory, cpu pages
+    Test overview, memory
     """
-    app.uri = tests.utils.URIs.kvm_cpu_insecure
+    app.uri = tests.utils.URIs.kvm_x86
     win = app.manager_open_details("test")
     appl = win.find("config-apply", "push button")
 
@@ -193,6 +203,26 @@ def testDetailsEditDomain1(app):
     _stop_vm(win)
     lib.utils.check(lambda: curmem.text == "1500")
     lib.utils.check(lambda: maxmem.text == "1500")
+
+    # Change the 'Shared mem' setting, verify the XML change,
+    # make sure unsetting it works too
+    starting_xml = lib.utils.get_xmleditor_xml(app, win)
+    tab.find("Enable shared", "check box").click()
+    appl.click()
+    lib.utils.check(lambda: not appl.sensitive)
+    new_xml = lib.utils.get_xmleditor_xml(app, win)
+    assert "source type=\"memfd\"" in new_xml
+    tab.find("Enable shared", "check box").click()
+    appl.click()
+    lib.utils.check(lambda: not appl.sensitive)
+    assert lib.utils.get_xmleditor_xml(app, win) == starting_xml
+
+
+def testDetailsEditCPU(app):
+    app.uri = tests.utils.URIs.kvm_x86_cpu_insecure
+    win = app.manager_open_details("test")
+    appl = win.find("config-apply", "push button")
+    _stop_vm(win)
 
     # Static CPU config
     # more cpu config: host-passthrough, copy, clear CPU, manual
@@ -309,7 +339,7 @@ def testDetailsEditDomain2(app):
 
     initrd = tab.find("Initrd path:", "text")
     tab.find("initrd-browse", "push button").click()
-    app.select_storagebrowser_volume("default-pool", "backingl1.img")
+    app.select_storagebrowser_volume("pool-dir", "backingl1.img")
     lib.utils.check(lambda: win.active)
     lib.utils.check(lambda: "backing" in initrd.text)
     appl.click()
@@ -317,14 +347,14 @@ def testDetailsEditDomain2(app):
     lib.utils.check(lambda: win.active)
 
     tab.find("kernel-browse", "push button").click()
-    app.select_storagebrowser_volume("default-pool", "bochs-vol")
+    app.select_storagebrowser_volume("pool-dir", "bochs-vol")
     lib.utils.check(lambda: win.active)
     kernelpath = tab.find("Kernel path:", "text")
     lib.utils.check(lambda: "bochs" in kernelpath.text)
 
     dtb = tab.find("DTB path:", "text")
     tab.find("dtb-browse", "push button").click()
-    app.select_storagebrowser_volume("default-pool", "iso-vol")
+    app.select_storagebrowser_volume("pool-dir", "iso-vol")
     lib.utils.check(lambda: win.active)
     lib.utils.check(lambda: "iso-vol" in dtb.text)
 
@@ -392,7 +422,6 @@ def testDetailsEditDiskNet(app):
     tab.find("Serial:", "text").set_text("1234-ABCD")
     tab.combo_select("Cache mode:", "unsafe")
     tab.combo_select("Discard mode:", "unmap")
-    tab.combo_select("Detect zeroes:", "unmap")
     appl.click()
     lib.utils.check(lambda: not appl.sensitive)
 
@@ -419,6 +448,16 @@ def testDetailsEditDiskNet(app):
     # Check validation error
     app.click_alert_button("Error changing VM configuration", "Close")
     tab.find("Device name:", "text").set_text("zbr0")
+    appl.click()
+    lib.utils.check(lambda: not appl.sensitive)
+
+    # Portgroup
+    src.click()
+    tab.find_fuzzy("plainbridge-portgroups",
+                   "menu item").bring_on_screen().click()
+    c = tab.find_fuzzy("Portgroup:", "combo box")
+    c.click_combo_entry()
+    c.find("sales").click()
     appl.click()
     lib.utils.check(lambda: not appl.sensitive)
 
@@ -491,10 +530,20 @@ def testDetailsEditDevices1(app):
     appl.click()
     lib.utils.check(lambda: not appl.sensitive)
 
+    # Listen 'none' to default 'address' type triggers
+    # a specific code path
+    tab.combo_select("Listen type:", "Address")
+    portauto = tab.find("graphics-port-auto", "check")
+    lib.utils.check(lambda: portauto.visible)
+    tab.find("OpenGL:", "check box")
+    appl.click()
+    lib.utils.check(lambda: not appl.sensitive)
+    # Make sure it sticks
+    tab.combo_check_default("Listen type:", "Address")
+
     # Switch to VNC with options
     tab.combo_select("Type:", "VNC")
     tab.combo_select("Listen type:", "Address")
-    tab.find("graphics-port-auto", "check").click()
     tab.find("graphics-port-auto", "check").click()
     tab.find("graphics-port", "spin button").set_text("6001")
     tab.find("Password:", "check").click()
@@ -547,6 +596,7 @@ def testDetailsEditDevices1(app):
 
 
 def testDetailsEditDevices2(app):
+    app.uri = tests.utils.URIs.kvm_x86
     win = app.manager_open_details("test-many-devices",
             shutdown=True)
     appl = win.find("config-apply", "push button")
@@ -576,6 +626,9 @@ def testDetailsEditDevices2(app):
 
     # Filesystem tweaks
     tab = _select_hw(app, win, "Filesystem /target/", "filesystem-tab")
+    tab.combo_select("Driver:", "virtiofs")
+    w = tab.find_fuzzy("Enable shared memory", "label")
+    lib.utils.check(lambda: w.visible)
     tab.find("Source path:", "text").set_text("/frib1")
     tab.find("Target path:", "text").set_text("newtarget")
     tab.find_fuzzy("Export filesystem", "check box").click()
@@ -591,7 +644,10 @@ def testDetailsEditDevices2(app):
 
     # TPM tweaks
     tab = _select_hw(app, win, "TPM", "tpm-tab")
-    tab.combo_select("tpm-model", "CRB")
+    tab.combo_select("Type:", "Emulated")
+    tab.find("Advanced options", "toggle button").click_expander()
+    tab.combo_select("Model:", "CRB")
+    tab.combo_select("Version:", "2.0")
     appl.click()
     lib.utils.check(lambda: not appl.sensitive)
 
@@ -731,7 +787,7 @@ def testDetailsXMLEdit(app):
     # Make some disk edits
     tab = _select_hw(app, win, "IDE Disk 1", "disk-tab")
     win.find("XML", "page tab").click()
-    origpath = "/dev/default-pool/test-clone-simple.img"
+    origpath = "/pool-dir/test-clone-simple.img"
     newpath = "/path/FOOBAR"
     xmleditor.set_text(xmleditor.text.replace(origpath, newpath))
     finish.click()

@@ -106,6 +106,24 @@ def fake_openauth(conn, cb, data):
     assert all([bool(cred[4]) for cred in creds])
 
 
+class fakeVirtBootstrap:
+    @staticmethod
+    def bootstrap(**kwargs):
+        import time
+        import logging
+        log = logging.getLogger("virtBootstrap")
+        log.info("mock virtBootstrap msg1")
+        kwargs["progress_cb"]({"status": "msg1"})
+        time.sleep(.5)
+        log.info("mock virtBootstrap msg2")
+        kwargs["progress_cb"]({"status": "msg2"})
+        time.sleep(.5)
+        log.info("mock virtBootstrap msg3")
+        kwargs["progress_cb"]({"status": "msg3"})
+        if "username" in kwargs:
+            raise RuntimeError("fakeVirtBootstrap mock auth failure!")
+
+
 class CLITestOptionsClass:
     """
     Helper class for parsing and tracking --test-* options.
@@ -157,6 +175,8 @@ class CLITestOptionsClass:
         Spice doesn't return values here when we are just testing
         against seabios in uitests, this fakes it to hit more code paths
     * fake-systray: Enable the fake systray window
+    * fake-virtbootstrap: Mock the virtBootstrap module, since getting
+        it to actually work across fedora versions is hard
     * object-denylist=NAME: Make object initialize for that name
         fail to test some connection code paths
     * conn-crash: Test connection abruptly closing like when
@@ -214,6 +234,7 @@ class CLITestOptionsClass:
         self.fake_openauth = _get("fake-openauth")
         self.fake_session_error = _get("fake-session-error")
         self.short_poll = _get("short-poll")
+        self.fake_virtbootstrap = _get("fake-virtbootstrap")
 
         if optset:  # pragma: no cover
             raise RuntimeError("Unknown --test-options keys: %s" % optset)

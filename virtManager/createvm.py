@@ -78,8 +78,9 @@ def _pretty_memory(mem):
 # Helpers for tracking devices we create from this wizard #
 ###########################################################
 
-def is_virt_bootstrap_installed():
-    return pkgutil.find_loader('virtBootstrap') is not None
+def is_virt_bootstrap_installed(conn):
+    ret = pkgutil.find_loader('virtBootstrap') is not None
+    return ret or conn.config.CLITestOptions.fake_virtbootstrap
 
 
 class _GuestData:
@@ -103,7 +104,7 @@ class _GuestData:
 
         self.machine = None
         self.os_variant = None
-        self.uefi_path = None
+        self.uefi_requested = None
         self.name = None
 
         self.vcpus = None
@@ -139,8 +140,8 @@ class _GuestData:
             guest.os.machine = self.machine
         if self.os_variant:
             guest.set_os_name(self.os_variant)
-        if self.uefi_path:
-            guest.set_uefi_path(self.uefi_path)
+        if self.uefi_requested:
+            guest.uefi_requested = self.uefi_requested
 
         if self.filesystem:
             guest.add_device(self.filesystem)
@@ -477,11 +478,18 @@ class vmmCreateVM(vmmGObjectUI):
                 guest.os.is_ppc64() or
                 guest.os.is_s390x())
 
-        if guest.prefers_uefi():
+        default_efi = (
+            self.config.get_default_firmware_setting() == "uefi" and
+            guest.os.is_x86() and
+            guest.os.is_hvm())
+        if default_efi:
+            log.debug("UEFI default requested via app preferences")
+
+        if guest.prefers_uefi() or default_efi:
             try:
-                self._gdata.uefi_path = guest.get_uefi_path()
-                # Call for validation
-                guest.set_uefi_path(self._gdata.uefi_path)
+                # We call this for validation
+                guest.enable_uefi()
+                self._gdata.uefi_requested = True
                 installable_arch = True
                 log.debug("UEFI found, setting it as default.")
             except Exception as e:
@@ -623,7 +631,7 @@ class vmmCreateVM(vmmGObjectUI):
         # Allow container bootstrap only for local connection and
         # only if virt-bootstrap is installed. Otherwise, show message.
         is_local = not self.conn.is_remote()
-        vb_installed = is_virt_bootstrap_installed()
+        vb_installed = is_virt_bootstrap_installed(self.conn)
         vb_enabled = is_local and vb_installed
 
         oscontainer_widget_conf = {
@@ -633,8 +641,8 @@ class vmmCreateVM(vmmGObjectUI):
             "install-oscontainer-source": vb_enabled,
             "install-oscontainer-rootpw-box": vb_enabled
             }
-        for w in oscontainer_widget_conf:
-            self.widget(w).set_visible(oscontainer_widget_conf[w])
+        for wname, val in oscontainer_widget_conf.items():
+            self.widget(wname).set_visible(val)
 
         # Memory
         memory = int(self.conn.host_memory_size())
@@ -978,9 +986,8 @@ class vmmCreateVM(vmmGObjectUI):
         self.widget("summary-cpu").set_text(cpu)
         self._populate_summary_storage()
 
-        ignore0, nsource, ignore1 = self._netlist.get_network_selection()
-        expand = not nsource
-        if expand:
+        nsource = self._netlist.get_network_selection()[1]
+        if not nsource:
             self.widget("advanced-expander").set_expanded(True)
 
 
@@ -1776,7 +1783,7 @@ class vmmCreateVM(vmmGObjectUI):
         detectThread = threading.Thread(target=self._detect_thread_cb,
                                         name="Actual media detection",
                                         args=(cdrom, location, thread_results))
-        detectThread.setDaemon(True)
+        detectThread.daemon = True
         detectThread.start()
 
         self._os_list.search_entry.set_text(_("Detecting..."))
@@ -2077,12 +2084,15 @@ class vmmCreateVM(vmmGObjectUI):
         as state/details.
         """
         import logging
-        import virtBootstrap
 
-        meter.start(text=_("Bootstraping container"), size=100)
+        if self.conn.config.CLITestOptions.fake_virtbootstrap:
+            from .lib.testmock import fakeVirtBootstrap as virtBootstrap
+        else:  # pragma: no cover
+            import virtBootstrap  # pylint: disable=import-error
+
+        meter.start(_("Bootstraping container"), None)
         def progress_update_cb(prog):
-            meter.text = _(prog['status'])
-            meter.update(prog['value'])
+            meter.start(_(prog['status']), None)
 
         asyncjob.details_enable()
         # Use logging filter to show messages of the progreess on the GUI

@@ -4,6 +4,7 @@
 import os
 
 import libvirt
+import pytest
 
 from virtinst import log
 
@@ -37,7 +38,10 @@ def _vm_wrapper(vmname, uri="qemu:///system", opts=None):
                 except Exception:
                     pass
                 try:
-                    dom.undefine()
+                    flags = 0
+                    if "qemu" in uri:
+                        flags = libvirt.VIR_DOMAIN_UNDEFINE_NVRAM
+                    dom.undefineFlags(flags)
                     dom.destroy()
                 except Exception:
                     pass
@@ -400,6 +404,32 @@ def testConsoleSpiceSpecific(app, dom):
     win.click_title()
 
 
+@_vm_wrapper("uitests-vnc-standard")
+def testVNCSpecific(app, dom):
+    from gi.repository import GtkVnc
+    if not hasattr(GtkVnc.Display, "set_allow_resize"):
+        pytest.skip("GtkVnc is too old")
+
+    ignore = dom
+    win = app.topwin
+    con = win.find("console-gfx-viewport")
+    lib.utils.check(lambda: con.showing)
+
+    # Test guest resize behavior
+    def _click_auto():
+        vmenu = win.find("^View$", "menu")
+        vmenu.click()
+        smenu = vmenu.find("Scale Display", "menu")
+        smenu.point()
+        smenu.find("Auto resize VM", "check menu item").click()
+    _click_auto()
+    win.click_title()
+    win.window_maximize()
+    _click_auto()
+    win.click_title()
+    win.click_title()
+
+
 def _testLiveHotplug(app, fname):
     win = app.topwin
     win.find("Details", "radio button").click()
@@ -472,3 +502,45 @@ def testLiveHotplug(app, dom):
             pool.undefine()
         except Exception:
             log.debug("Error cleaning up pool", exc_info=True)
+
+
+@_vm_wrapper("uitests-firmware-efi")
+def testFirmwareRename(app, dom):
+    from virtinst import cli, DeviceDisk
+    win = app.topwin
+    dom.destroy()
+
+    # First we refresh the 'nvram' pool, so we can reliably
+    # check if nvram files are created/deleted as expected
+    conn = cli.getConnection(app.conn.getURI())
+    origname = dom.name()
+    nvramdir = conn.get_libvirt_data_root_dir() + "/qemu/nvram"
+
+    fakedisk = DeviceDisk(conn)
+    fakedisk.set_source_path(nvramdir + "/FAKE-UITEST-FILE")
+    nvram_pool = fakedisk.get_parent_pool()
+    nvram_pool.refresh()
+
+    origpath = "%s/%s_VARS.fd" % (nvramdir, origname)
+    newname = "uitests-firmware-efi-renamed"
+    newpath = "%s/%s_VARS.fd" % (nvramdir, newname)
+    assert DeviceDisk.path_definitely_exists(app.conn, origpath)
+    assert not DeviceDisk.path_definitely_exists(app.conn, newpath)
+
+    # Now do the actual UI clickage
+    win.find("Details", "radio button").click()
+    win.find("Hypervisor Details", "label")
+    win.find("Overview", "table cell").click()
+
+    newname = "uitests-firmware-efi-renamed"
+    win.find("Name:", "text").set_text(newname)
+    appl = win.find("config-apply")
+    appl.click()
+    lib.utils.check(lambda: not appl.sensitive)
+
+    # Confirm window was updated
+    app.find_window("%s on" % newname)
+
+    # Confirm nvram paths were altered as expected
+    assert not DeviceDisk.path_definitely_exists(app.conn, origpath)
+    assert DeviceDisk.path_definitely_exists(app.conn, newpath)

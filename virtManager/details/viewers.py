@@ -5,6 +5,8 @@
 # This work is licensed under the GNU GPLv2 or later.
 # See the COPYING file in the top-level directory.
 
+import os
+
 from gi.repository import Gdk
 from gi.repository import GObject
 
@@ -12,12 +14,15 @@ import gi
 gi.require_version('GtkVnc', '2.0')
 from gi.repository import GtkVnc
 try:
+    SPICE_GTK_IMPORT_ERROR = None
+    if "VIRTINST_TEST_SUITE_FAKE_NO_SPICE" in os.environ:
+        raise ImportError("test suite faking no spice")
+
     gi.require_version('SpiceClientGtk', '3.0')
     from gi.repository import SpiceClientGtk
     from gi.repository import SpiceClientGLib
-    have_spice_gtk = True
-except (ValueError, ImportError):  # pragma: no cover
-    have_spice_gtk = False
+except (ValueError, ImportError) as _SPICE_GTK_IMPORT_ERROR:
+    SPICE_GTK_IMPORT_ERROR = str(_SPICE_GTK_IMPORT_ERROR)
 
 from virtinst import log
 
@@ -28,6 +33,10 @@ from ..baseclass import vmmGObject
 ##################################
 # VNC/Spice abstraction handling #
 ##################################
+
+def _gtkvnc_supports_resizeguest():
+    return hasattr(GtkVnc.Display, "set_allow_resize")
+
 
 class Viewer(vmmGObject):
     """
@@ -183,12 +192,12 @@ class Viewer(vmmGObject):
         raise NotImplementedError()
     def _get_resizeguest(self):
         raise NotImplementedError()
+    def _get_resizeguest_warning(self):
+        raise NotImplementedError()
 
     def _get_usb_widget(self):
         raise NotImplementedError()
     def _has_usb_redirection(self):
-        raise NotImplementedError()
-    def _has_agent(self):
         raise NotImplementedError()
 
 
@@ -244,13 +253,13 @@ class Viewer(vmmGObject):
         return self._get_resizeguest()
     def console_set_resizeguest(self, val):
         return self._set_resizeguest(val)
+    def console_get_resizeguest_warning(self):
+        return self._get_resizeguest_warning()
 
     def console_get_usb_widget(self):
         return self._get_usb_widget()
     def console_has_usb_redirection(self):
         return self._has_usb_redirection()
-    def console_has_agent(self):
-        return self._has_agent()
 
     def console_remove_display_from_widget(self, widget):
         if self._display and self._display in widget.get_children():
@@ -408,16 +417,20 @@ class VNCViewer(Viewer):
         self._display.set_credential(GtkVnc.DisplayCredential.PASSWORD, cred)
 
     def _set_resizeguest(self, val):
-        ignore = val
+        if _gtkvnc_supports_resizeguest():
+            self._display.set_allow_resize(val)  # pylint: disable=no-member
     def _get_resizeguest(self):
-        return False
+        if _gtkvnc_supports_resizeguest():
+            return self._display.get_allow_resize()  # pylint: disable=no-member
+        return False  # pragma: no cover
+    def _get_resizeguest_warning(self):
+        if not _gtkvnc_supports_resizeguest():
+            return _("GTK-VNC viewer is too old")  # pragma: no cover
 
     def _get_usb_widget(self):
         return None  # pragma: no cover
     def _has_usb_redirection(self):
         return False
-    def _has_agent(self):
-        return False  # pragma: no cover
 
 
     #######################
@@ -733,11 +746,13 @@ class SpiceViewer(Viewer):
     def _set_resizeguest(self, val):
         if self._display:
             self._display.set_property("resize-guest", val)
-
     def _get_resizeguest(self):
         if self._display:
             return self._display.get_property("resize-guest")
         return False  # pragma: no cover
+    def _get_resizeguest_warning(self):
+        if not self._has_agent():
+            return _("Guest agent is not available.")
 
     def _usbdev_redirect_error(self, spice_usbdev_widget, spice_usb_device,
             errstr):  # pragma: no cover

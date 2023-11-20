@@ -12,7 +12,7 @@ from virtinst import log
 
 from .serialcon import vmmSerialConsole
 from .sshtunnels import ConnectionInfo
-from .viewers import SpiceViewer, VNCViewer, have_spice_gtk
+from .viewers import SpiceViewer, VNCViewer, SPICE_GTK_IMPORT_ERROR
 from ..baseclass import vmmGObject, vmmGObjectUI
 from ..lib.keyring import vmmKeyring
 
@@ -149,7 +149,9 @@ class vmmOverlayToolbar:
         self._toolbar.get_accessible().set_name("Fullscreen Toolbar")
 
         # Exit button
-        button = Gtk.ToolButton.new_from_stock(Gtk.STOCK_LEAVE_FULLSCREEN)
+        button = Gtk.ToolButton()
+        button.set_label(_("Leave Fullscreen"))
+        button.set_icon_name("view-restore")
         button.set_tooltip_text(_("Leave fullscreen"))
         button.show()
         button.get_accessible().set_name("Fullscreen Exit")
@@ -258,7 +260,7 @@ class _ConsoleMenu:
 
             cb = toggled_cb
             cbdata = dev
-            sensitive = dev and not tooltip
+            sensitive = bool(dev and not tooltip)
 
             active = False
             if oldlabel is None and sensitive:
@@ -332,10 +334,13 @@ class vmmConsolePages(vmmGObjectUI):
         self.widget("console-overlay").add_overlay(
                 self._overlay_toolbar_fullscreen.timed_revealer.get_overlay_widget())
 
-        # Make viewer widget background always be black
-        black = Gdk.Color(0, 0, 0)
-        self.widget("console-gfx-viewport").modify_bg(Gtk.StateType.NORMAL,
-                                                      black)
+        # When the gtk-vnc and spice-gtk widgets are in non-scaling mode, we
+        # make them fill the whole window, and they paint the non-VM areas of
+        # the viewer black. But when scaling is enabled, the viewer widget is
+        # constrained. This change makes sure the non-VM portions in that case
+        # are also colored black, rather than the default theme window color.
+        self.widget("console-gfx-viewport").modify_bg(
+                Gtk.StateType.NORMAL, Gdk.Color(0, 0, 0))
 
         self.widget("console-pages").set_show_tabs(False)
         self.widget("serial-pages").set_show_tabs(False)
@@ -487,13 +492,8 @@ class vmmConsolePages(vmmGObjectUI):
     def _viewer_get_resizeguest_tooltip(self):
         tooltip = ""
         if self._viewer:
-            if self._viewer.viewer_type != "spice":
-                tooltip = (
-                    _("Graphics type '%s' does not support auto resize.") %
-                    self._viewer.viewer_type)
-            elif not self._viewer.console_has_agent():
-                tooltip = _("Guest agent is not available.")
-        return tooltip
+            tooltip = self._viewer.console_get_resizeguest_warning()
+        return tooltip or ""
 
     def _sync_resizeguest_with_display(self):
         if not self._viewer:
@@ -589,7 +589,7 @@ class vmmConsolePages(vmmGObjectUI):
             self.widget("console-gfx-viewport"))
         self._viewer.cleanup()
         self._viewer = None
-        log.debug("Viewer disconnected")
+        log.debug("Viewer object cleaned up")
 
     def _refresh_vm_state(self):
         self._activate_default_console_page()
@@ -723,9 +723,10 @@ class vmmConsolePages(vmmGObjectUI):
             if ginfo.gtype == "vnc":
                 viewer_class = VNCViewer
             elif ginfo.gtype == "spice":
-                if not have_spice_gtk:  # pragma: no cover
-                    raise RuntimeError("Error opening Spice console, "
-                                       "SpiceClientGtk missing")
+                if SPICE_GTK_IMPORT_ERROR:
+                    raise RuntimeError(
+                            "Error opening SPICE console: %s" %
+                            SPICE_GTK_IMPORT_ERROR)
                 viewer_class = SpiceViewer
 
             self._viewer = viewer_class(self.vm, ginfo)
@@ -757,18 +758,18 @@ class vmmConsolePages(vmmGObjectUI):
     # Viewer signal handling #
     ##########################
 
-    def _viewer_add_display(self, ignore, display):
+    def _viewer_add_display_cb(self, _src, display):
         self.widget("console-gfx-viewport").add(display)
 
         # Sync initial settings
         self._sync_scaling_with_display()
         self._sync_resizeguest_with_display()
 
-    def _pointer_grabbed(self, ignore):
+    def _pointer_grabbed_cb(self, _src):
         self._pointer_is_grabbed = True
         self.emit("change-title")
 
-    def _pointer_ungrabbed(self, ignore):
+    def _pointer_ungrabbed_cb(self, _src):
         self._pointer_is_grabbed = False
         self.emit("change-title")
 
@@ -791,7 +792,7 @@ class vmmConsolePages(vmmGObjectUI):
         else:
             self._enable_modifiers()
 
-    def _viewer_auth_error(self, ignore, errmsg, viewer_will_disconnect):
+    def _viewer_auth_error_cb(self, _src, errmsg, viewer_will_disconnect):
         errmsg = _("Viewer authentication error: %s") % errmsg
         self.err.val_err(errmsg)
 
@@ -803,16 +804,16 @@ class vmmConsolePages(vmmGObjectUI):
 
         self._refresh_vm_state()
 
-    def _viewer_need_auth(self, ignore, withPassword, withUsername):
+    def _viewer_need_auth_cb(self, _src, withPassword, withUsername):
         self._activate_auth_page(withPassword, withUsername)
 
-    def _viewer_agent_connected(self, ignore):
+    def _viewer_agent_connected_cb(self, _src):
         # Tell the vmwindow to trigger a state refresh, since
         # resizeguest setting depends on the agent value
         if self.widget("console-pages").is_visible():  # pragma: no cover
             self.emit("page-changed")
 
-    def _viewer_usb_redirect_error(self, ignore, errstr):
+    def _viewer_usb_redirect_error_cb(self, _src, errstr):
         self.err.show_err(
                 _("USB redirection error"),
                 text2=str(errstr), modal=True)  # pragma: no cover
@@ -824,45 +825,55 @@ class vmmConsolePages(vmmGObjectUI):
             return
 
         msg = _("Viewer was disconnected.")
+        errmsg = ""
         if errdetails:
-            msg += "\n" + errdetails
+            errmsg += "\n" + errdetails
         if ssherr:
             log.debug("SSH tunnel error output: %s", ssherr)
-            msg += "\n\n"
-            msg += _("SSH tunnel error output: %s") % ssherr
+            errmsg += "\n\n"
+            errmsg += _("SSH tunnel error output: %s") % ssherr
 
-        self._activate_gfx_unavailable_page(msg)
+        if errmsg:
+            self._activate_gfx_unavailable_page(msg + errmsg)
+            return
 
-    def _viewer_disconnected(self, ignore, errdetails, ssherr):
-        self._activate_gfx_unavailable_page(_("Viewer disconnected."))
-        log.debug("Viewer disconnected")
+        # If no error message was reported, this isn't a clear graphics
+        # error that should block reconnecting. So use the top level
+        # 'VM unavailable' page which makes it easier for the user to
+        # reconnect.
+        self._activate_vm_unavailable_page(msg)
+
+    def _viewer_disconnected_cb(self, _src, errdetails, ssherr):
+        self._activate_gfx_unavailable_page(_("Viewer is disconnecting."))
+        log.debug("Viewer disconnected cb")
 
         # Make sure modifiers are set correctly
         self._viewer_sync_modifiers()
 
         self._viewer_disconnected_set_page(errdetails, ssherr)
 
-    def _viewer_connected(self, ignore):
-        log.debug("Viewer connected")
+    def _viewer_connected_cb(self, _src):
+        log.debug("Viewer connected cb")
         self._activate_gfx_viewer_page()
 
         # Make sure modifiers are set correctly
         self._viewer_sync_modifiers()
 
     def _connect_viewer_signals(self):
-        self._viewer.connect("add-display-widget", self._viewer_add_display)
-        self._viewer.connect("pointer-grab", self._pointer_grabbed)
-        self._viewer.connect("pointer-ungrab", self._pointer_ungrabbed)
+        self._viewer.connect("add-display-widget", self._viewer_add_display_cb)
+        self._viewer.connect("pointer-grab", self._pointer_grabbed_cb)
+        self._viewer.connect("pointer-ungrab", self._pointer_ungrabbed_cb)
         self._viewer.connect("size-allocate", self._viewer_allocate_cb)
         self._viewer.connect("keyboard-grab", self._viewer_keyboard_grab_cb)
         self._viewer.connect("keyboard-ungrab", self._viewer_keyboard_grab_cb)
-        self._viewer.connect("connected", self._viewer_connected)
-        self._viewer.connect("disconnected", self._viewer_disconnected)
-        self._viewer.connect("auth-error", self._viewer_auth_error)
-        self._viewer.connect("need-auth", self._viewer_need_auth)
-        self._viewer.connect("agent-connected", self._viewer_agent_connected)
+        self._viewer.connect("connected", self._viewer_connected_cb)
+        self._viewer.connect("disconnected", self._viewer_disconnected_cb)
+        self._viewer.connect("auth-error", self._viewer_auth_error_cb)
+        self._viewer.connect("need-auth", self._viewer_need_auth_cb)
+        self._viewer.connect("agent-connected",
+            self._viewer_agent_connected_cb)
         self._viewer.connect("usb-redirect-error",
-            self._viewer_usb_redirect_error)
+            self._viewer_usb_redirect_error_cb)
 
 
     ##############################
@@ -966,7 +977,7 @@ class vmmConsolePages(vmmGObjectUI):
 
     def vmwindow_close(self):
         return self._activate_vm_unavailable_page(
-                _("Viewer disconnected."))
+                _("Viewer window closed."))
     def vmwindow_get_title_message(self):
         if self._pointer_is_grabbed and self._viewer:
             keystr = self._viewer.console_get_grab_keys()

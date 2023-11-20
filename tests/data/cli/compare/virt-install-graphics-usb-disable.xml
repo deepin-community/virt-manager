@@ -18,7 +18,7 @@
     <apic/>
     <vmport state="off"/>
   </features>
-  <cpu mode="host-model"/>
+  <cpu mode="host-passthrough"/>
   <clock offset="utc">
     <timer name="rtc" tickpolicy="catchup"/>
     <timer name="pit" tickpolicy="delay"/>
@@ -29,13 +29,28 @@
     <suspend-to-disk enabled="no"/>
   </pm>
   <devices>
-    <emulator>/usr/bin/qemu-kvm</emulator>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
     <disk type="file" device="disk">
-      <driver name="qemu" type="qcow2"/>
+      <driver name="qemu" type="qcow2" discard="unmap"/>
       <source file="/var/lib/libvirt/images/fedora26.qcow2"/>
       <target dev="vda" bus="virtio"/>
     </disk>
     <controller type="usb" model="none"/>
+    <controller type="pci" model="pcie-root"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
+    <controller type="pci" model="pcie-root-port"/>
     <interface type="bridge">
       <source bridge="testsuitebr0"/>
       <mac address="00:11:22:33:44:55"/>
@@ -54,7 +69,7 @@
     </graphics>
     <sound model="ich9"/>
     <video>
-      <model type="qxl"/>
+      <model type="virtio"/>
     </video>
     <memballoon model="virtio"/>
     <rng model="virtio">

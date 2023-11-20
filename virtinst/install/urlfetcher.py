@@ -18,6 +18,39 @@ import requests
 from ..logger import log
 
 
+#########################
+# isoreader abstraction #
+#########################
+
+class _XorrisoReader():
+    def __init__(self, location):
+        self._location = location
+        self._cache_file_list = self._make_file_list()
+
+    def _make_file_list(self):
+        delim = "VIRTINST_BEGINLIST"
+        cmd = ["xorriso", "-indev", self._location, "-print", delim, "-find"]
+
+        log.debug("Generating iso filelist: %s", cmd)
+        output = subprocess.check_output(cmd,
+                stderr=subprocess.DEVNULL, universal_newlines=True)
+        return output.split(delim, 1)[1].strip().splitlines()
+
+    def grabFile(self, url, scratchdir):
+        tmp = tempfile.NamedTemporaryFile(
+                prefix="virtinst-iso", suffix="-" + os.path.basename(url),
+                dir=scratchdir)
+
+        cmd = ["xorriso", "-osirrox", "on", "-indev", self._location,
+               "-extract", url, tmp.name]
+        log.debug("Extracting iso file: %s", cmd)
+        subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+        return open(tmp.name, "rb").read()
+
+    def hasFile(self, url):
+        return ("'.%s'" % url) in self._cache_file_list
+
+
 ###########################
 # Fetcher implementations #
 ###########################
@@ -70,12 +103,12 @@ class _URLFetcher(object):
             raise ValueError(msg) from None
 
         log.debug("Fetching URI: %s", url)
-        self.meter.start(
-            text=_("Retrieving file %s...") % os.path.basename(filename),
-            size=size)
+        msg = _("Retrieving '%(filename)s'") % {
+                "filename": os.path.basename(filename)}
+        self.meter.start(msg, size)
 
-        total = self._write(urlobj, fileobj)
-        self.meter.end(total)
+        self._write(urlobj, fileobj)
+        self.meter.end()
 
     def _write(self, urlobj, fileobj):
         """
@@ -146,7 +179,6 @@ class _URLFetcher(object):
         Grab the passed filename from self.location and save it to
         a temporary file, returning the temp filename
         """
-        # pylint: disable=redefined-variable-type
         fn = None
         try:
             fileobj = tempfile.NamedTemporaryFile(
@@ -302,39 +334,26 @@ class _LocalURLFetcher(_URLFetcher):
 
 
 class _ISOURLFetcher(_URLFetcher):
-    _cache_file_list = None
+    _isoreader = None
     _is_iso = True
 
     def _make_full_url(self, filename):
         return os.path.join("/", filename)
 
+    def _get_isoreader(self):
+        if not self._isoreader:
+            self._isoreader = _XorrisoReader(self.location)
+        return self._isoreader
+
     def _grabber(self, url):
-        """
-        Use isoinfo to grab the file
-        """
         if not self._hasFile(url):
-            raise RuntimeError("isoinfo didn't find file=%s" % url)
+            raise RuntimeError("iso doesn't have file=%s" % url)
 
-        cmd = ["isoinfo", "-J", "-i", self.location, "-x", url]
-
-        log.debug("Running isoinfo: %s", cmd)
-        output = subprocess.check_output(cmd)
-
+        output = self._get_isoreader().grabFile(url, self.scratchdir)
         return io.BytesIO(output), len(output)
 
     def _hasFile(self, url):
-        """
-        Use isoinfo to list and search for the file
-        """
-        if not self._cache_file_list:
-            cmd = ["isoinfo", "-J", "-i", self.location, "-f"]
-
-            log.debug("Running isoinfo: %s", cmd)
-            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-
-            self._cache_file_list = output.splitlines(False)
-
-        return url.encode("ascii") in self._cache_file_list
+        return self._get_isoreader().hasFile(url)
 
 
 class DirectFetcher(_URLFetcher):

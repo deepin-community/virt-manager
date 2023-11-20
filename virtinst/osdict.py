@@ -27,78 +27,6 @@ def _media_create_from_location(location):
     return Libosinfo.Media.create_from_location_with_flags(location, None, 0)
 
 
-###################
-# Sorting helpers #
-###################
-
-def _sortby(osobj):
-    """
-    Combines distro+version to make a more sort friendly string. Examples
-
-    fedora25    -> fedora-0025000000000000
-    ubuntu17.04 -> ubuntu-0017000400000000
-    win2k8r2    -> win-0006000100000000
-    """
-    if osobj.is_generic():
-        # Sort generic at the end of the list
-        return "zzzzzz-000000000000"
-
-    version = osobj.version
-    try:
-        t = version.split(".")
-        t = t[:min(4, len(t))] + [0] * (4 - min(4, len(t)))
-        new_version = ""
-        for n in t:
-            new_version = new_version + ("%.4i" % int(n))
-        version = new_version
-    except Exception:
-        pass
-
-    return "%s-%s" % (osobj.distro, version)
-
-
-def _sort(tosort):
-    sortby_mappings = {}
-    distro_mappings = {}
-    retlist = []
-
-    for key, osinfo in tosort.items():
-        # Libosinfo has some duplicate version numbers here, so append .1
-        # if there's a collision
-        sortby = _sortby(osinfo)
-        while sortby_mappings.get(sortby):
-            sortby = sortby + ".1"
-        sortby_mappings[sortby] = key
-
-        # Group by distro first, so debian is clumped together, fedora, etc.
-        distro = osinfo.distro
-        if osinfo.is_generic():
-            distro = "zzzzzz"
-        if distro not in distro_mappings:
-            distro_mappings[distro] = []
-        distro_mappings[distro].append(sortby)
-
-    # We want returned lists to be sorted descending by 'distro', so we get
-    # debian5, debian4, fedora14, fedora13
-    #   rather than
-    # debian4, debian5, fedora13, fedora14
-    for distro_list in list(distro_mappings.values()):
-        distro_list.sort()
-        distro_list.reverse()
-
-    sorted_distro_list = list(distro_mappings.keys())
-    sorted_distro_list.sort()
-
-    # Build the final list of sorted os objects
-    for distro in sorted_distro_list:
-        distro_list = distro_mappings[distro]
-        for key in distro_list:
-            orig_key = sortby_mappings[key]
-            retlist.append(tosort[orig_key])
-
-    return retlist
-
-
 class _OsinfoIter:
     """
     Helper to turn osinfo style get_length/get_nth lists into python
@@ -127,69 +55,22 @@ class _OSDB(object):
     """
     def __init__(self):
         self.__os_loader = None
-        self.__all_variants = None
-
-    # This is only for back compatibility with pre-libosinfo support.
-    # This should never change.
-    _aliases = {
-        "altlinux": "altlinux1.0",
-        "debianetch": "debian4",
-        "debianlenny": "debian5",
-        "debiansqueeze": "debian6",
-        "debianwheezy": "debian7",
-        "freebsd10": "freebsd10.0",
-        "freebsd6": "freebsd6.0",
-        "freebsd7": "freebsd7.0",
-        "freebsd8": "freebsd8.0",
-        "freebsd9": "freebsd9.0",
-        "mandriva2009": "mandriva2009.0",
-        "mandriva2010": "mandriva2010.0",
-        "mbs1": "mbs1.0",
-        "msdos": "msdos6.22",
-        "openbsd4": "openbsd4.2",
-        "opensolaris": "opensolaris2009.06",
-        "opensuse11": "opensuse11.4",
-        "opensuse12": "opensuse12.3",
-        "rhel4": "rhel4.0",
-        "rhel5": "rhel5.0",
-        "rhel6": "rhel6.0",
-        "rhel7": "rhel7.0",
-        "ubuntuhardy": "ubuntu8.04",
-        "ubuntuintrepid": "ubuntu8.10",
-        "ubuntujaunty": "ubuntu9.04",
-        "ubuntukarmic": "ubuntu9.10",
-        "ubuntulucid": "ubuntu10.04",
-        "ubuntumaverick": "ubuntu10.10",
-        "ubuntunatty": "ubuntu11.04",
-        "ubuntuoneiric": "ubuntu11.10",
-        "ubuntuprecise": "ubuntu12.04",
-        "ubuntuquantal": "ubuntu12.10",
-        "ubunturaring": "ubuntu13.04",
-        "ubuntusaucy": "ubuntu13.10",
-        "virtio26": "fedora10",
-        "vista": "winvista",
-        "winxp64": "winxp",
-
-        # Old --os-type values
-        "linux": "generic",
-        "windows": "winxp",
-        "solaris": "solaris10",
-        "unix": "freebsd9.0",
-        "other": "generic",
-    }
-
+        self.__os_generic = None
 
     #################
     # Internal APIs #
     #################
 
-    def _make_default_variants(self, allvariants):
-        # Add our custom generic variant
-        o = Libosinfo.Os()
-        o.set_param("short-id", "generic")
-        o.set_param("name", _("Generic OS"))
-        v = _OsVariant(o)
-        allvariants[v.name] = v
+    @property
+    def _os_generic(self):
+        if not self.__os_generic:
+            # Add our custom generic variant
+            o = Libosinfo.Os()
+            o.set_param("short-id", "generic")
+            o.set_param("name",
+                    _("Generic or unknown OS. Usage is not recommended."))
+            self.__os_generic = _OsVariant(o)
+        return self.__os_generic
 
     @property
     def _os_loader(self):
@@ -201,48 +82,35 @@ class _OSDB(object):
         return self.__os_loader
 
     @property
-    def _all_variants(self):
-        if not self.__all_variants:
-            loader = self._os_loader
-            allvariants = {}
-            db = loader.get_db()
-            oslist = db.get_os_list()
-            for o in _OsinfoIter(oslist):
-                osi = _OsVariant(o)
-                for name in osi.get_short_ids():
-                    allvariants[name] = osi
-
-            self._make_default_variants(allvariants)
-            self.__all_variants = allvariants
-        return self.__all_variants
-
+    def _os_db(self):
+        return self._os_loader.get_db()
 
     ###############
     # Public APIs #
     ###############
 
     def lookup_os_by_full_id(self, full_id, raise_error=False):
-        for osobj in self._all_variants.values():
-            if osobj.full_id == full_id:
-                return osobj
-        if raise_error:
-            raise ValueError(_("Unknown libosinfo ID '%s'") % full_id)
+        osobj = self._os_db.get_os(full_id)
+        if osobj is None:
+            if raise_error:
+                raise ValueError(_("Unknown libosinfo ID '%s'") % full_id)
+            return None
+        return _OsVariant(osobj)
 
     def lookup_os(self, key, raise_error=False):
-        if key not in self._all_variants and key in self._aliases:
-            alias = self._aliases[key]
-            # Added 2018-10-02. Maybe remove aliases in a year
-            msg = (_("OS name '%(oldname)s' is deprecated, using '%(newname)s' "
-                    "instead. This alias will be removed in the future.") %
-                    {"oldname": key, "newname": alias})
-            log.warning(msg)
-            key = alias
+        if key == self._os_generic.name:
+            return self._os_generic
 
-        ret = self._all_variants.get(key)
-        if ret is None and raise_error:
-            raise ValueError(_("Unknown OS name '%s'. "
-                    "See `osinfo-query os` for valid values.") % key)
-        return ret
+        flt = Libosinfo.Filter()
+        flt.add_constraint(Libosinfo.PRODUCT_PROP_SHORT_ID,
+                           key)
+        oslist = self._os_db.get_os_list().new_filtered(flt).get_elements()
+        if len(oslist) == 0:
+            if raise_error:
+                raise ValueError(_("Unknown OS name '%s'. "
+                                   "See `--osinfo list` for valid values.") % key)
+            return None
+        return _OsVariant(oslist[0])
 
     def guess_os_by_iso(self, location):
         try:
@@ -251,8 +119,8 @@ class _OSDB(object):
             log.debug("Error creating libosinfo media object: %s", str(e))
             return None
 
-        if not self._os_loader.get_db().identify_media(media):
-            return None  # pragma: no cover
+        if not self._os_db.identify_media(media):
+            return None
         return media.get_os().get_short_id(), _OsMedia(media)
 
     def guess_os_by_tree(self, location):
@@ -271,28 +139,32 @@ class _OSDB(object):
                 "location=%s : %s", location, str(e))
             return None
 
-        db = self._os_loader.get_db()
-        if hasattr(db, "identify_tree"):
+        if hasattr(self._os_db, "identify_tree"):
             # osinfo_db_identify_tree is part of libosinfo 1.6.0
-            if not db.identify_tree(tree):
+            if not self._os_db.identify_tree(tree):
                 return None  # pragma: no cover
             return tree.get_os().get_short_id(), _OsTree(tree)
         else:  # pragma: no cover
-            osobj, treeobj = self._os_loader.get_db().guess_os_from_tree(tree)
+            osobj, treeobj = self._os_db.guess_os_from_tree(tree)
             if not osobj:
                 return None  # pragma: no cover
             return osobj.get_short_id(), _OsTree(treeobj)
 
-    def list_os(self):
+    def list_os(self, sortkey="name"):
         """
-        List all OSes in the DB
+        List all OSes in the DB, sorting by the passes _OsVariant attribute
         """
-        sortmap = {}
+        oslist = [_OsVariant(osent) for osent in
+                  self._os_db.get_os_list().get_elements()]
+        oslist.append(self._os_generic)
 
-        for osobj in self._all_variants.values():
-            sortmap[osobj.name] = osobj
-
-        return _sort(sortmap)
+        # human/natural sort, but with reverse sorted numbers
+        def to_int(text):
+            return (int(text) * -1) if text.isdigit() else text.lower()
+        def alphanum_key(obj):
+            val = getattr(obj, sortkey)
+            return [to_int(c) for c in re.split('([0-9]+)', val)]
+        return list(sorted(oslist, key=alphanum_key))
 
 
 OSDB = _OSDB()
@@ -371,6 +243,7 @@ class _OsVariant(object):
         if hasattr(self._os, "get_short_id_list"):
             self._short_ids = self._os.get_short_id_list()
         self.name = self._short_ids[0]
+        self.all_names = list(sorted(set(self._short_ids)))
 
         self._family = self._os.get_family()
         self.full_id = self._os.get_id()
@@ -485,17 +358,11 @@ class _OsVariant(object):
     def is_generic(self):
         return self.name == "generic"
 
+    def is_linux_generic(self):
+        return re.match(r"linux\d\d\d\d", self.name)
+
     def is_windows(self):
         return self._family in ['win9x', 'winnt', 'win16']
-
-    def get_short_ids(self):
-        return self._short_ids[:]
-
-    def broken_uefi_with_hyperv(self):
-        # Some windows versions are broken with hyperv enlightenments + UEFI
-        # https://bugzilla.redhat.com/show_bug.cgi?id=1185253
-        # https://bugs.launchpad.net/qemu/+bug/1593605
-        return self.name in ("win2k8r2", "win7")
 
     def get_clock(self):
         if self.is_windows() or self._family in ['solaris']:
@@ -504,14 +371,6 @@ class _OsVariant(object):
 
     def supported_netmodels(self):
         return self._device_filter(cls="net")
-
-    def supports_usbtablet(self, extra_devs=None):
-        # If no OS specified, still default to tablet
-        if self.is_generic():
-            return True
-
-        devids = ["http://usb.org/usb/80ee/0021"]
-        return bool(self._device_filter(devids=devids, extra_devs=extra_devs))
 
     def supports_virtiodisk(self, extra_devs=None):
         # virtio-block and virtio1.0-block
@@ -535,6 +394,11 @@ class _OsVariant(object):
         # virtio-rng and virtio1.0-rng
         devids = ["http://pcisig.com/pci/1af4/1005",
                   "http://pcisig.com/pci/1af4/1044"]
+        return bool(self._device_filter(devids=devids, extra_devs=extra_devs))
+
+    def supports_virtiogpu(self, extra_devs=None):
+        # virtio1.0-gpu and virtio1.0
+        devids = ["http://pcisig.com/pci/1af4/1050"]
         return bool(self._device_filter(devids=devids, extra_devs=extra_devs))
 
     def supports_virtioballoon(self, extra_devs=None):
@@ -575,6 +439,40 @@ class _OsVariant(object):
         devids = ["http://qemu.org/chipset/x86/q35"]
         return bool(self._device_filter(devids=devids, extra_devs=extra_devs))
 
+    def _get_firmware_list(self):
+        if hasattr(self._os, "get_complete_firmware_list"):  # pragma: no cover
+            return self._os.get_complete_firmware_list().get_elements()
+        return []  # pragma: no cover
+
+    def _supports_firmware_type(self, name, arch, default):
+        firmwares = self._get_firmware_list()
+
+        for firmware in firmwares:  # pragma: no cover
+            if firmware.get_architecture() != arch:
+                continue
+            if firmware.get_firmware_type() == name:
+                return firmware.is_supported()
+
+        return default
+
+    def requires_firmware_efi(self, arch):
+        ret = False
+        try:
+            supports_efi = self._supports_firmware_type("efi", arch, False)
+            supports_bios = self._supports_firmware_type("bios", arch, True)
+            ret = supports_efi and not supports_bios
+        except Exception:  # pragma: no cover
+            log.debug("Error checking osinfo firmware support", exc_info=True)
+
+        if self.name == "win11":  # pragma: no cover
+            # 2022-03 the libosinfo APIs for firmware haven't landed, and
+            # there's no osinfo-db entry for win11. But we know win11 requires
+            # UEFI. Hardcode it for now, so the next virt-install release has
+            # a better chance of doing the right thing for win11 when
+            # it pops up in a osinfo-db release.
+            ret = True
+        return ret
+
     def get_recommended_resources(self):
         minimum = self._os.get_minimum_resources()
         recommended = self._os.get_recommended_resources()
@@ -593,6 +491,12 @@ class _OsVariant(object):
         Kernel argument name the distro's installer uses to reference
         a network source, possibly bypassing some installer prompts
         """
+        # Let's ask the OS for its kernel argument for the source
+        if hasattr(self._os, "get_kernel_url_argument"):
+            osarg = self._os.get_kernel_url_argument()
+            if osarg is not None:
+                return osarg
+
         # SUSE distros
         if self.distro in ["caasp", "sle", "sled", "sles", "opensuse"]:
             return "install"
@@ -600,23 +504,8 @@ class _OsVariant(object):
         if self.distro not in ["centos", "rhel", "fedora"]:
             return None
 
-        # Red Hat distros
-        try:
-            if re.match(r"[0-9]+-unknown", self.version):
-                version = float(self.version.split("-")[0])
-            else:
-                version = float(self.version)
-        except Exception:
-            # Can hit this for -rawhide or -unknown
-            version = 999
-
-        if self.distro in ["centos", "rhel"] and version < 7:
-            return "method"
-
-        if self.distro in ["fedora"] and version < 19:
-            return "method"
-
-        return "inst.repo"
+        # Default for RH distros, in case libosinfo data isn't complete
+        return "inst.repo"  # pragma: no cover
 
     def _get_generic_location(self, treelist, arch, profile):
         if not hasattr(Libosinfo.Tree, "get_os_variants"):  # pragma: no cover

@@ -12,6 +12,7 @@ from ..xmlbuilder import XMLProperty
 
 class DeviceFilesystem(Device):
     XML_NAME = "filesystem"
+    _XML_PROP_ORDER = ["_type_prop", "accessmode", "fmode", "dmode"]
 
     TYPE_MOUNT = "mount"
     TYPE_TEMPLATE = "template"
@@ -28,8 +29,11 @@ class DeviceFilesystem(Device):
     _type_prop = XMLProperty("./@type")
     accessmode = XMLProperty("./@accessmode")
     model = XMLProperty("./@model")
-    readonly = XMLProperty("./readonly", is_bool=True)
     multidevs = XMLProperty("./@multidevs")
+    fmode = XMLProperty("./@fmode")
+    dmode = XMLProperty("./@dmode")
+
+    readonly = XMLProperty("./readonly", is_bool=True)
     space_hard_limit = XMLProperty("./space_hard_limit")
     space_soft_limit = XMLProperty("./space_soft_limit")
 
@@ -49,12 +53,14 @@ class DeviceFilesystem(Device):
     source_units = XMLProperty("./source/@units")
     source_pool = XMLProperty("./source/@pool")
     source_volume = XMLProperty("./source/@volume")
+    source_socket = XMLProperty("./source/socket")
 
     binary_path = XMLProperty("./binary/@path")
     binary_xattr = XMLProperty("./binary/@xattr", is_onoff=True)
     binary_cache_mode = XMLProperty("./binary/cache/@mode")
     binary_lock_posix = XMLProperty("./binary/lock/@posix", is_onoff=True)
     binary_lock_flock = XMLProperty("./binary/lock/@flock", is_onoff=True)
+    binary_sandbox_mode = XMLProperty("./binary/sandbox/@mode")
 
     def _type_to_source_prop(self):
         if self.type == DeviceFilesystem.TYPE_TEMPLATE:
@@ -121,6 +127,15 @@ class DeviceFilesystem(Device):
         if self.target:
             self.validate_target(self.target)
 
+    def default_accessmode(self):
+        if self.driver_type == "virtiofs":
+            # let libvirt fill in default accessmode=passthrough
+            return None
+        # libvirt qemu defaults to accessmode=passthrough, but that
+        # really only works well for qemu running as root, which is
+        # not the common case. so use mode=mapped
+        return self.MODE_MAPPED
+
 
     ##################
     # Default config #
@@ -129,14 +144,15 @@ class DeviceFilesystem(Device):
     def set_defaults(self, guest):
         ignore = guest
 
-        if self.conn.is_qemu() or self.conn.is_lxc() or self.conn.is_test():
-            # type=mount is the libvirt default. But hardcode it
-            # here since we need it for the accessmode check
-            if self.type is None:
-                self.type = self.TYPE_MOUNT
+        if not (self.conn.is_qemu() or
+                self.conn.is_lxc() or
+                self.conn.is_test()):
+            return
 
-            # libvirt qemu defaults to accessmode=passthrough, but that
-            # really only works well for qemu running as root, which is
-            # not the common case. so use mode=mapped
-            if self.accessmode is None:
-                self.accessmode = self.MODE_MAPPED
+        # type=mount is the libvirt default. But hardcode it since other
+        # bits like validation depend on it
+        if self.type is None:
+            self.type = self.TYPE_MOUNT
+
+        if self.accessmode is None:
+            self.accessmode = self.default_accessmode()

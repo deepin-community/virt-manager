@@ -48,10 +48,8 @@ class _StorageObject(XMLBuilder):
 
 
 def _preferred_default_pool_path(conn):
-    path = "/var/lib/libvirt/images"
-    if conn.is_unprivileged():
-        path = os.path.expanduser("~/.local/share/libvirt/images")
-    return path
+    root = conn.get_libvirt_data_root_dir()
+    return os.path.join(root, "images")
 
 
 def _lookup_poolxml_by_path(conn, path):
@@ -595,7 +593,8 @@ class StorageVolume(_StorageObject):
         log.debug("Attempting to detect format for backing_store=%s",
                 self.backing_store)
         from . import diskbackend
-        vol, pool = diskbackend.manage_path(self.conn, self.backing_store)
+        path, vol, pool = diskbackend.manage_path(self.conn, self.backing_store)
+        dummy = path
 
         if not vol:  # pragma: no cover
             log.debug("Didn't find any volume for backing_store")
@@ -680,12 +679,12 @@ class StorageVolume(_StorageObject):
         t = threading.Thread(target=_progress_thread,
                              name="Checking storage allocation",
                              args=(self.name, self.pool, meter, event))
-        t.setDaemon(True)
+        t.daemon = True
 
         try:
             t.start()
-            meter.start(size=self.capacity,
-                        text=_("Allocating '%s'") % self.name)
+            msg = _("Allocating '%(filename)s'") % {"filename": self.name}
+            meter.start(msg, self.capacity)
 
             if self.conn.is_really_test():
                 # Test suite doesn't support any flags, so reset them
@@ -698,7 +697,7 @@ class StorageVolume(_StorageObject):
                 log.debug("Using vol create flags=%s", createflags)
                 vol = self.pool.createXML(xml, createflags)
 
-            meter.end(self.capacity)
+            meter.end()
             log.debug("Storage volume '%s' install complete.", self.name)
             return vol
         except Exception as e:

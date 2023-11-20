@@ -5,7 +5,7 @@
   <currentMemory>65536</currentMemory>
   <vcpu>1</vcpu>
   <os>
-    <type arch="x86_64" machine="pc">hvm</type>
+    <type arch="x86_64" machine="pc-i440fx-6.1">hvm</type>
     <kernel>/VIRTINST-TESTSUITE/frib.img</kernel>
     <initrd>/VIRTINST-TESTSUITE/frob.img</initrd>
   </os>
@@ -14,22 +14,21 @@
     <apic/>
     <vmport state="off"/>
   </features>
-  <cpu mode="host-model"/>
+  <cpu mode="host-passthrough"/>
   <clock offset="utc">
     <timer name="rtc" tickpolicy="catchup"/>
     <timer name="pit" tickpolicy="delay"/>
     <timer name="hpet" present="no"/>
   </clock>
-  <on_reboot>destroy</on_reboot>
   <pm>
     <suspend-to-mem enabled="no"/>
     <suspend-to-disk enabled="no"/>
   </pm>
   <devices>
-    <emulator>/usr/bin/qemu-kvm</emulator>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
     <disk type="file" device="cdrom">
       <driver name="qemu"/>
-      <source file="tests/data/fakemedia/fake-no-osinfo.iso"/>
+      <source file="TESTSUITE_SCRUBBED/tests/data/fakemedia/fake-no-osinfo.iso"/>
       <target dev="hda" bus="ide"/>
       <readonly/>
     </disk>
@@ -63,6 +62,7 @@
     <redirdev bus="usb" type="spicevmc"/>
     <redirdev bus="usb" type="spicevmc"/>
   </devices>
+  <on_reboot>destroy</on_reboot>
 </domain>
 <domain type="kvm">
   <name>vm1</name>
@@ -71,7 +71,7 @@
   <currentMemory>65536</currentMemory>
   <vcpu>1</vcpu>
   <os>
-    <type arch="x86_64" machine="pc">hvm</type>
+    <type arch="x86_64" machine="pc-i440fx-6.1">hvm</type>
     <boot dev="cdrom"/>
   </os>
   <features>
@@ -79,7 +79,7 @@
     <apic/>
     <vmport state="off"/>
   </features>
-  <cpu mode="host-model"/>
+  <cpu mode="host-passthrough"/>
   <clock offset="utc">
     <timer name="rtc" tickpolicy="catchup"/>
     <timer name="pit" tickpolicy="delay"/>
@@ -90,8 +90,10 @@
     <suspend-to-disk enabled="no"/>
   </pm>
   <devices>
-    <emulator>/usr/bin/qemu-kvm</emulator>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
     <disk type="file" device="cdrom">
+      <driver name="qemu"/>
+      <source file="TESTSUITE_SCRUBBED/tests/data/fakemedia/fake-no-osinfo.iso"/>
       <target dev="hda" bus="ide"/>
       <readonly/>
     </disk>

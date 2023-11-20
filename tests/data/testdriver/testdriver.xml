@@ -47,9 +47,9 @@
   <cpu mode='host-passthrough'/>
   <os>
     <type arch="i686">hvm</type>
-    <kernel>/dev/default-pool/test-arm-kernel</kernel>
-    <initrd>/dev/default-pool/test-arm-initrd</initrd>
-    <dtb>/dev/default-pool/test-arm-dtb</dtb>
+    <kernel>/pool-dir/test-arm-kernel</kernel>
+    <initrd>/pool-dir/test-arm-initrd</initrd>
+    <dtb>/pool-dir/test-arm-dtb</dtb>
     <cmdline>console=ttyAMA0 rw root=/dev/vda3</cmdline>
   </os>
 </domain>
@@ -205,7 +205,7 @@ Foo bar baz &amp; yeah boii &lt; &gt; yeahfoo
       <target dev='fdb' bus='fdc'/>
     </disk>
     <disk type='dir' device='floppy'>
-      <source dir='/dev/default-pool/test-clone-simple.img'/>
+      <source dir='/pool-dir/test-clone-simple.img'/>
       <target dev='fdc' bus='fdc'/>
     </disk>
 
@@ -231,7 +231,7 @@ Foo bar baz &amp; yeah boii &lt; &gt; yeahfoo
     <!-- bus scsi -->
     <disk type='file' device='cdrom'>
       <target dev='sdb' bus='scsi'/>
-      <source file='/dev/default-pool/sharevol.img'/>
+      <source file='/pool-dir/sharevol.img'/>
       <address type='drive' controller='5'/>
       <shareable/>
     </disk>
@@ -245,7 +245,7 @@ Foo bar baz &amp; yeah boii &lt; &gt; yeahfoo
       <shareable/>
     </disk>
 
-    <disk type='block' device='lun' rawio='no' sgio='unfiltered'>
+    <disk type='block' device='lun' rawio='no'>
       <driver name='qemu' type='raw'/>
       <source dev='/dev/szz'>
         <reservations managed="yes"/>
@@ -253,7 +253,7 @@ Foo bar baz &amp; yeah boii &lt; &gt; yeahfoo
       <target dev='sdc' bus='scsi'/>
     </disk>
     <disk type='file' device='cdrom'>
-      <source file='/dev/default-pool/testvol2.img'/>
+      <source file='/pool-dir/testvol2.img'/>
       <target dev='sdf' bus='scsi'/>
       <readonly/>
     </disk>
@@ -261,7 +261,7 @@ Foo bar baz &amp; yeah boii &lt; &gt; yeahfoo
     <!-- bus virtio -->
     <disk type="volume" device="disk">
       <driver name="qemu"/>
-      <source pool="rbd-ceph" volume="vol1"/>
+      <source pool="pool-rbd-ceph" volume="vol1"/>
       <target dev="vdb" bus="virtio"/>
       <readonly/>
     </disk>
@@ -318,14 +318,14 @@ Foo bar baz &amp; yeah boii &lt; &gt; yeahfoo
 
     <!-- bus usb -->
     <disk type='volume' device='disk'>
-      <source pool='default-pool' volume='overlay.img'/>
+      <source pool='pool-dir' volume='overlay.img'/>
       <target dev='sdd' bus='usb'/>
     </disk>
 
     <!-- bus xen -->
     <disk type='file' device='disk'>
       <driver name='tap' type='qcow' cache="writethrough"/>
-      <source file='/dev/default-pool/test-clone-simple.img'/>
+      <source file='/pool-dir/test-clone-simple.img'/>
       <target dev='xvdc' bus='xen'/>
     </disk>
 
@@ -793,7 +793,7 @@ test-many-devices, like an alternate RNG, EOL OS ID, title field
   <devices>
     <emulator>/usr/lib/xen/bin/qemu-dm</emulator>
     <disk type='file' device='disk'>
-      <source file='/dev/default-pool/test-clone-simple.img'/>
+      <source file='/pool-dir/test-clone-simple.img'/>
       <target dev='hda' bus='ide'/>
       <driver type="qcow2"/>
     </disk>
@@ -830,12 +830,12 @@ test-many-devices, like an alternate RNG, EOL OS ID, title field
   <devices>
     <emulator>/usr/lib/xen/bin/qemu-dm</emulator>
     <disk type='block' device='floppy'>
-      <source dev='/dev/disk-pool/diskvol1'/>
+      <source dev='/dev/pool-logical/diskvol1'/>
       <target dev='fda' bus='fdc'/>
       <driver type="vmdk"/>
     </disk>
     <disk type='block' device='disk'>
-      <source dev='/dev/disk-pool/diskvol2'/>
+      <source dev='/dev/pool-logical/diskvol2'/>
       <target dev='sda' bus='scsi'/>
       <readonly/>
     </disk>
@@ -843,17 +843,17 @@ test-many-devices, like an alternate RNG, EOL OS ID, title field
       <target dev='sdb' bus='scsi'/>
     </disk>
     <disk type='block' device='disk'>
-      <source dev='/dev/default-pool/collidevol1.img'/>
+      <source dev='/pool-dir/collidevol1.img'/>
       <target dev='sdc' bus='scsi'/>
       <driver type="qcow2"/>
       <shareable/>
     </disk>
     <disk type='file' device='disk'>
-      <source file='/dev/default-pool/default-vol'/>
+      <source file='/pool-dir/default-vol'/>
       <target dev='hda' bus='ide'/>
     </disk>
     <disk type='file' device='disk'>
-      <source file='/dev/default-pool/testvol9.img'/>
+      <source file='/pool-dir/testvol9.img'/>
       <target dev='hdb' bus='ide'/>
     </disk>
     <interface type='network'>
@@ -903,53 +903,13 @@ test-many-devices, like an alternate RNG, EOL OS ID, title field
   <devices>
     <emulator>/usr/lib/xen/bin/qemu-dm</emulator>
     <disk type='block' device='disk'>
-      <source dev='/full-pool/testvol1.img'/>
+      <source dev='/pool-test-full-pool/testvol1.img'/>
       <target dev='hda' bus='ide'/>
     </disk>
     <interface type='user'>
       <mac address='22:11:11:11:11:11'/>
     </interface>
     <console type='pty'/>
-  </devices>
-</domain>
-
-
-<domain type='test'>
-  <name>test-hyperv-uefi</name>
-  <uuid>4a64cc71-19c4-2fd0-2323-f050941ea3c3</uuid>
-  <description>Used for testing specific win7 hyperv+uefi incompatibility via virt-xml</description>
-  <metadata>
-    <libosinfo:libosinfo xmlns:libosinfo="http://libosinfo.org/xmlns/libvirt/domain/1.0">
-      <libosinfo:os id="http://microsoft.com/win/7"/>
-    </libosinfo:libosinfo>
-  </metadata>
-  <memory>8388608</memory>
-  <currentMemory>2097152</currentMemory>
-  <vcpu>2</vcpu>
-  <os>
-    <type arch='i686'>hvm</type>
-    <boot dev='hd'/>
-  </os>
-  <features>
-    <acpi/>
-    <apic/>
-    <hyperv>
-      <relaxed state="on"/>
-      <vapic state="on"/>
-      <spinlocks state="on" retries="8191"/>
-    </hyperv>
-    <vmport state="off"/>
-  </features>
-  <clock offset="localtime">
-    <timer name="rtc" tickpolicy="catchup"/>
-    <timer name="pit" tickpolicy="delay"/>
-    <timer name="hpet" present="no"/>
-    <timer name="hypervclock" present="yes"/>
-  </clock>
-  <on_poweroff>destroy</on_poweroff>
-  <on_reboot>restart</on_reboot>
-  <on_crash>destroy</on_crash>
-  <devices>
   </devices>
 </domain>
 
@@ -1015,7 +975,7 @@ test-many-devices, like an alternate RNG, EOL OS ID, title field
   <bootloader>/tmp/bootfoo</bootloader>
   <devices>
     <disk type='file' device='disk'>
-      <source file='/dev/default-pool/test-clone-simple.img'/>
+      <source file='/pool-dir/test-clone-simple.img'/>
       <target dev='hda' bus='ide'/>
     </disk>
     <graphics type='vnc'/>
@@ -1048,7 +1008,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1086,7 +1046,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1121,7 +1081,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1159,7 +1119,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1197,7 +1157,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1232,7 +1192,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1267,7 +1227,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1304,7 +1264,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1337,7 +1297,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1374,7 +1334,7 @@ ba</description>
     <on_crash>destroy</on_crash>
     <devices>
       <disk type='file' device='disk'>
-        <source file='/dev/default-pool/test-clone-simple.img'/>
+        <source file='/pool-dir/test-clone-simple.img'/>
         <target dev='hda' bus='ide'/>
         <address type='drive' controller='0' bus='0' target='0' unit='0'/>
       </disk>
@@ -1636,7 +1596,7 @@ ba</description>
 
 
 <pool type='dir'>
-  <name>default-pool</name>
+  <name>pool-dir</name>
   <uuid>35bb2ad9-388a-cdfe-461a-b8907f6e53fe</uuid>
   <capacity>107374182400</capacity>
   <allocation>0</allocation>
@@ -1644,7 +1604,7 @@ ba</description>
   <source>
   </source>
   <target>
-    <path>/dev/default-pool</path>
+    <path>/pool-dir</path>
     <permissions>
       <mode>0700</mode>
       <owner>10736</owner>
@@ -1808,7 +1768,7 @@ ba</description>
       <format type='qcow2'/>
     </target>
     <backingStore>
-      <path>/dev/default-pool/backingl3.img</path>
+      <path>/pool-dir/backingl3.img</path>
     </backingStore>
   </volume>
   <volume type='file'>
@@ -1819,7 +1779,7 @@ ba</description>
       <format type='qcow2'/>
     </target>
     <backingStore>
-      <path>/dev/default-pool/backingl2.img</path>
+      <path>/pool-dir/backingl2.img</path>
     </backingStore>
   </volume>
   <volume type='file'>
@@ -1830,7 +1790,7 @@ ba</description>
       <format type='qcow2'/>
     </target>
     <backingStore>
-      <path>/dev/default-pool/backingl1.img</path>
+      <path>/pool-dir/backingl1.img</path>
     </backingStore>
   </volume>
 
@@ -1864,7 +1824,7 @@ ba</description>
 
 
 <pool type='dir'>
-  <name>spurious-slash-pool</name>
+  <name>pool-test-spurious-slash</name>
   <uuid>35bb2ad9-1122-cdfe-461a-b8907f6e53fe</uuid>
   <capacity>107374182400</capacity>
   <allocation>0</allocation>
@@ -1872,7 +1832,7 @@ ba</description>
   <source>
   </source>
   <target>
-    <path>/spurious-slash-pool//</path>
+    <path>/pool-test-spurious-splash//</path>
     <permissions>
       <mode>0700</mode>
       <owner>10736</owner>
@@ -1908,7 +1868,7 @@ ba</description>
 
 
 <pool type='dir'>
-  <name>inactive-pool</name>
+  <name>pool-test-inactive</name>
   <uuid>35bb2aaa-388a-cdfe-461a-b8907f6e53fe</uuid>
   <capacity>107374182400</capacity>
   <allocation>0</allocation>
@@ -1916,7 +1876,7 @@ ba</description>
   <source>
   </source>
   <target>
-    <path>/inactive-pool</path>
+    <path>/pool-test-inactive</path>
     <permissions>
       <mode>0700</mode>
       <owner>10736</owner>
@@ -1941,7 +1901,7 @@ ba</description>
 
 
 <pool type='dir'>
-  <name>cross-pool</name>
+  <name>pool-test-cross-pool</name>
   <uuid>35bb2ad9-388a-cdfe-461a-b8907f6e5abc</uuid>
   <capacity>107374182400</capacity>
   <allocation>0</allocation>
@@ -1949,7 +1909,7 @@ ba</description>
   <source>
   </source>
   <target>
-    <path>/dev/cross-pool</path>
+    <path>/dev/pool-test-cross-pool</path>
     <permissions>
       <mode>0700</mode>
       <owner>10736</owner>
@@ -1986,7 +1946,7 @@ ba</description>
 
 
 <pool type='dir'>
-  <name>full-pool</name>
+  <name>pool-test-full-pool</name>
   <uuid>35bb2ad9-388a-cdfe-461a-b8907f6e5555</uuid>
   <capacity>1</capacity>
   <allocation>1</allocation>
@@ -1994,7 +1954,7 @@ ba</description>
   <source>
   </source>
   <target>
-    <path>/full-pool</path>
+    <path>/pool-test-full-pool</path>
     <permissions>
       <mode>0700</mode>
       <owner>10736</owner>
@@ -2017,9 +1977,48 @@ ba</description>
   </volume>
 </pool>
 
+<pool type='disk'>
+  <name>pool-disk</name>
+  <uuid>f426a5fe-d5b7-4086-a30d-95e32731cbb7</uuid>
+  <capacity unit='bytes'>2088960</capacity>
+  <allocation unit='bytes'>1304576</allocation>
+  <available unit='bytes'>783360</available>
+  <source>
+    <device path='/dev/sdfg'>
+      <freeExtent start='1305600' end='2088960'/>
+    </device>
+    <format type='dos'/>
+  </source>
+  <target>
+    <path>/dev/pool-disk</path>
+  </target>
+
+  <volume type='block'>
+    <name>sdfg1</name>
+    <key>/dev/sdfg1</key>
+    <source>
+      <device path='/dev/sdfg'>
+        <extent start='1024' end='1305600'/>
+      </device>
+    </source>
+    <capacity unit='bytes'>1304576</capacity>
+    <allocation unit='bytes'>1304576</allocation>
+    <physical unit='bytes'>1304576</physical>
+    <target>
+      <path>/dev/sda1</path>
+      <format type='none'/>
+      <permissions>
+        <mode>0660</mode>
+        <owner>0</owner>
+        <group>6</group>
+        <label>system_u:object_r:fixed_disk_device_t:s0</label>
+      </permissions>
+    </target>
+  </volume>
+</pool>
 
 <pool type='logical'>
-  <name>disk-pool</name>
+  <name>pool-logical</name>
   <uuid>35bb2ad9-388a-cdfe-461a-b8907f6e5aaa</uuid>
   <capacity>107374182400</capacity>
   <allocation>0</allocation>
@@ -2027,7 +2026,7 @@ ba</description>
   <source>
   </source>
   <target>
-    <path>/dev/disk-pool</path>
+    <path>/dev/pool-logical</path>
     <permissions>
       <mode>0700</mode>
       <owner>10736</owner>
@@ -2063,7 +2062,7 @@ ba</description>
 
 
 <pool type='iscsi'>
-  <name>iscsi-pool</name>
+  <name>pool-iscsi</name>
   <uuid>abcdead9-388a-cdfe-461a-b8907f6e5aaa</uuid>
   <capacity>107374182400</capacity>
   <allocation>0</allocation>
@@ -2073,7 +2072,7 @@ ba</description>
     <device path="demo-target"/>
   </source>
   <target>
-    <path>/iscsi-pool</path>
+    <path>/pool-iscsi</path>
     <permissions>
       <mode>0700</mode>
       <owner>10736</owner>
@@ -2098,7 +2097,7 @@ ba</description>
 
 
 <pool type='iscsi-direct'>
-  <name>iscsi-direct</name>
+  <name>pool-iscsi-direct</name>
   <uuid>0799697a-94dd-4115-9601-8714b1931248</uuid>
   <capacity unit='bytes'>524287488</capacity>
   <allocation unit='bytes'>524287488</allocation>
@@ -2126,7 +2125,7 @@ ba</description>
 </pool>
 
 <pool type='rbd'>
-  <name>rbd-ceph</name>
+  <name>pool-rbd-ceph</name>
   <uuid>4bcd023e-990e-fcf6-d95c-52dd0cd938c8</uuid>
   <capacity unit='bytes'>47256127143936</capacity>
   <allocation unit='bytes'>5537792235090</allocation>
@@ -2166,7 +2165,7 @@ ba</description>
 
 
 <pool type='sheepdog'>
-  <name>myshpool</name>
+  <name>pool-sheepdog</name>
   <uuid>581381f8-a13f-4f7c-89b5-9c9b71c64834</uuid>
   <capacity unit='bytes'>107374182400</capacity>
   <allocation unit='bytes'>53687091200</allocation>
@@ -2195,7 +2194,7 @@ ba</description>
 
 
 <pool type='gluster'>
-  <name>gluster-pool</name>
+  <name>pool-gluster</name>
   <uuid>7b83ef6d-28da-44f1-841f-2011320f13b0</uuid>
   <capacity unit='bytes'>492258959360</capacity>
   <allocation unit='bytes'>16975638528</allocation>
@@ -2257,7 +2256,7 @@ ba</description>
 
 
 <pool type="zfs">
-  <name>zfs</name>
+  <name>pool-zfs</name>
   <source>
     <name>testzfspool</name>
     <device path="/dev/ada1"/>
@@ -2265,7 +2264,7 @@ ba</description>
 </pool>
 
 <pool type="dir">
-  <name>nvram</name>
+  <name>pool-test-nvram</name>
   <source>
   </source>
   <target>
@@ -2305,7 +2304,7 @@ ba</description>
 </pool>
 
 <pool type='mpath'>
-  <name>mpath</name>
+  <name>pool-mpath</name>
   <target>
     <path>/dev/mapper</path>
   </target>
@@ -2313,7 +2312,7 @@ ba</description>
 
 
 <pool type='scsi'>
-  <name>scsi</name>
+  <name>pool-scsi</name>
   <source>
     <adapter type='scsi_host' name='host0'/>
   </source>
@@ -3645,5 +3644,111 @@ ba</description>
   </capability>
 </device>
 
+<device>
+  <name>css_0_0_0023</name>
+  <path>/sys/devices/css0/0.0.0023</path>
+  <parent>computer</parent>
+  <driver>
+    <name>vfio_ccw</name>
+  </driver>
+  <capability type='css'>
+    <cssid>0x0</cssid>
+    <ssid>0x0</ssid>
+    <devno>0x0023</devno>
+    <capability type='mdev_types'>
+      <type id='vfio_ccw-io'>
+        <name>I/O subchannel (Non-QDIO)</name>
+        <deviceAPI>vfio-ccw</deviceAPI>
+        <availableInstances>0</availableInstances>
+      </type>
+    </capability>
+  </capability>
+</device>
+
+<device>
+  <name>mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110</name>
+  <path>/sys/devices/css0/0.0.0023/8e37ee90-2b51-45e3-9b25-bf8283c03110</path>
+  <parent>css_0_0_0023</parent>
+  <driver>
+    <name>vfio_mdev</name>
+  </driver>
+  <capability type='mdev'>
+    <type id='vfio_ccw-io'/>
+    <iommuGroup number='0'/>
+  </capability>
+</device>
+
+<device>
+  <name>mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110-fakeinactive</name>
+  <path>/sys/devices/css0/0.0.0023/8e37ee90-2b51-45e3-9b25-bf8283c03110-fakeinactive</path>
+  <parent>css_0_0_0023</parent>
+  <driver>
+    <name>vfio_mdev</name>
+  </driver>
+  <capability type='mdev'>
+    <type id='vfio_ccw-io'/>
+    <iommuGroup number='0'/>
+  </capability>
+</device>
+
+<device>
+  <name>ap_matrix</name>
+  <path>/sys/devices/vfio_ap/matrix</path>
+  <parent>computer</parent>
+  <driver>
+    <name>vfio_ap</name>
+  </driver>
+  <capability type='ap_matrix'>
+    <capability type='mdev_types'>
+      <type id='vfio_ap-passthrough'>
+        <name>VFIO AP Passthrough Device</name>
+        <deviceAPI>vfio-ap</deviceAPI>
+        <availableInstances>65536</availableInstances>
+      </type>
+    </capability>
+  </capability>
+</device>
+
+<device>
+  <name>mdev_11f92c9d_b0b0_4016_b306_a8071277f8b9</name>
+  <path>/sys/devices/vfio_ap/matrix/11f92c9d-b0b0-4016-b306-a8071277f8b9</path>
+  <parent>ap_matrix</parent>
+  <driver>
+    <name>vfio_mdev</name>
+  </driver>
+  <capability type='mdev'>
+    <type id='vfio_ap-passthrough'/>
+    <iommuGroup number='2'/>
+    <attr name='assign_adapter' value='1'/>
+    <attr name='assign_domain' value='2'/>
+  </capability>
+</device>
+
+<device>
+  <name>mdev_4b20d080_1b54_4048_85b3_a6a62d165c01</name>
+  <path>/sys/devices/pci0000:00/0000:00:02.0/4b20d080-1b54-4048-85b3-a6a62d165c01</path>
+  <parent>pci_0000_06_00_0</parent>
+  <driver>
+    <name>vfio_mdev</name>
+  </driver>
+ <capability type='mdev'>
+    <type id='nvidia-11'/>
+    <iommuGroup number='12'/>
+  </capability>
+</device>
+
+<device>
+  <name>mdev_35ceae7f_eea5_4f28_b7f3_7b12a3e62d3c_0000_06_00_0</name>
+  <path>/sys/devices/pci0000:00/0000:00:02.0/35ceae7f-eea5-4f28-b7f3-7b12a3e62d3c</path>
+  <parent>pci_0000_06_00_0</parent>
+  <driver>
+    <name>vfio_mdev</name>
+  </driver>
+ <capability type='mdev'>
+    <type id='nvidia-11'/>
+    <iommuGroup number='12'/>
+    <uuid>35ceae7f-eea5-4f28-b7f3-7b12a3e62d3c</uuid>
+  </capability>
+</device>
 
 </node>

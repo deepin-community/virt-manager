@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Generated with glade 3.38.1 -->
+<!-- Generated with glade 3.38.2 -->
 <interface>
   <requires lib="gtk+" version="3.22"/>
   <object class="GtkAdjustment" id="adjustment6">
@@ -94,20 +94,6 @@
       </packing>
     </child>
     <child>
-      <object class="GtkLabel" id="fs-mode-title">
-        <property name="visible">True</property>
-        <property name="can-focus">False</property>
-        <property name="halign">start</property>
-        <property name="label" translatable="yes">M_ode:</property>
-        <property name="use-underline">True</property>
-        <property name="mnemonic-widget">fs-mode-combo</property>
-      </object>
-      <packing>
-        <property name="left-attach">0</property>
-        <property name="top-attach">3</property>
-      </packing>
-    </child>
-    <child>
       <object class="GtkLabel" id="fs-driver-title">
         <property name="visible">True</property>
         <property name="can-focus">False</property>
@@ -147,19 +133,6 @@
       <packing>
         <property name="left-attach">0</property>
         <property name="top-attach">6</property>
-      </packing>
-    </child>
-    <child>
-      <object class="GtkAlignment" id="alignment20">
-        <property name="visible">True</property>
-        <property name="can-focus">False</property>
-        <child>
-          <placeholder/>
-        </child>
-      </object>
-      <packing>
-        <property name="left-attach">0</property>
-        <property name="top-attach">7</property>
       </packing>
     </child>
     <child>
@@ -226,7 +199,7 @@
       </object>
       <packing>
         <property name="left-attach">0</property>
-        <property name="top-attach">2</property>
+        <property name="top-attach">3</property>
       </packing>
     </child>
     <child>
@@ -244,7 +217,7 @@
       </object>
       <packing>
         <property name="left-attach">1</property>
-        <property name="top-attach">2</property>
+        <property name="top-attach">3</property>
       </packing>
     </child>
     <child>
@@ -284,22 +257,47 @@
       </packing>
     </child>
     <child>
-      <object class="GtkComboBox" id="fs-mode-combo">
+      <object class="GtkBox" id="fs-driver-warn-box">
         <property name="visible">True</property>
         <property name="can-focus">False</property>
-        <property name="halign">start</property>
-        <property name="has-entry">True</property>
-        <signal name="changed" handler="on_fs_mode_combo_changed" swapped="no"/>
-        <child internal-child="entry">
-          <object class="GtkEntry">
+        <property name="spacing">3</property>
+        <child>
+          <object class="GtkImage">
+            <property name="visible">True</property>
             <property name="can-focus">False</property>
+            <property name="icon-name">dialog-warning</property>
           </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel" id="fs-driver-warn">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="label" translatable="yes">blah foo warning message</property>
+            <property name="wrap">True</property>
+            <property name="max-width-chars">40</property>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
+          </packing>
         </child>
       </object>
       <packing>
         <property name="left-attach">1</property>
-        <property name="top-attach">3</property>
+        <property name="top-attach">2</property>
       </packing>
+    </child>
+    <child>
+      <placeholder/>
+    </child>
+    <child>
+      <placeholder/>
     </child>
   </object>
 </interface>

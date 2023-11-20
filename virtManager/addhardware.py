@@ -12,7 +12,7 @@ from virtinst import (DeviceChannel, DeviceConsole,
         DeviceController, DeviceDisk, DeviceHostdev,
         DeviceInput, DeviceInterface, DevicePanic, DeviceParallel,
         DeviceRedirdev, DeviceRng, DeviceSerial, DeviceSmartcard,
-        DeviceSound, DeviceTpm, DeviceVideo, DeviceVsock, DeviceWatchdog)
+        DeviceSound, DeviceVideo, DeviceVsock, DeviceWatchdog)
 from virtinst import log
 
 from .lib import uiutil
@@ -22,6 +22,7 @@ from .device.addstorage import vmmAddStorage
 from .device.fsdetails import vmmFSDetails
 from .device.gfxdetails import vmmGraphicsDetails
 from .device.netlist import vmmNetworkList
+from .device.tpmdetails import vmmTPMDetails
 from .device.vsockdetails import vmmVsockDetails
 from .storagebrowse import vmmStorageBrowser
 from .xmleditor import vmmXMLEditor
@@ -78,6 +79,9 @@ class vmmAddHardware(vmmGObjectUI):
         self._vsockdetails = vmmVsockDetails(self.vm, self.builder, self.topwin)
         self.widget("vsock-align").add(self._vsockdetails.top_box)
 
+        self._tpmdetails = vmmTPMDetails(self.vm, self.builder, self.topwin)
+        self.widget("tpm-align").add(self._tpmdetails.top_box)
+
         self._xmleditor = vmmXMLEditor(self.builder, self.topwin,
                 self.widget("create-pages-align"),
                 self.widget("create-pages"))
@@ -98,8 +102,6 @@ class vmmAddHardware(vmmGObjectUI):
             "on_char_device_type_changed": self._change_char_device_type,
             "on_char_target_name_changed": self._change_char_target_name,
             "on_char_auto_socket_toggled": self._change_char_auto_socket,
-
-            "on_tpm_device_type_changed": self._change_tpm_device_type,
 
             "on_usbredir_type_changed": self._change_usbredir_type,
 
@@ -145,6 +147,8 @@ class vmmAddHardware(vmmGObjectUI):
         self.addstorage = None
         self._vsockdetails.cleanup()
         self._vsockdetails = None
+        self._tpmdetails.cleanup()
+        self._tpmdetails = None
         self._xmleditor.cleanup()
         self._xmleditor = None
 
@@ -188,7 +192,6 @@ class vmmAddHardware(vmmGObjectUI):
         self.build_watchdogaction_combo(self.vm, self.widget("watchdog-action"))
         self.build_smartcard_mode_combo(self.vm, self.widget("smartcard-mode"))
         self._build_redir_type_combo()
-        self._build_tpm_type_combo(self.vm)
         self._build_panic_model_combo()
         uiutil.build_simple_combo(self.widget("controller-model"), [])
         self._build_controller_type_combo()
@@ -221,21 +224,21 @@ class vmmAddHardware(vmmGObjectUI):
         add_hw_option(_("Sound"), "audio-card", PAGE_SOUND,
                       self.vm.is_hvm(),
                       _("Not supported for this guest type."))
-        add_hw_option(_("Serial"), Gtk.STOCK_CONNECT, PAGE_CHAR,
+        add_hw_option(_("Serial"), "device_serial", PAGE_CHAR,
                       self.vm.is_hvm(),
                       _("Not supported for this guest type."),
                       "serial")
-        add_hw_option(_("Parallel"), Gtk.STOCK_CONNECT, PAGE_CHAR,
+        add_hw_option(_("Parallel"), "device_serial", PAGE_CHAR,
                       self.vm.is_hvm(),
                       _("Not supported for this guest type."),
                       "parallel")
-        add_hw_option(_("Console"), Gtk.STOCK_CONNECT, PAGE_CHAR,
+        add_hw_option(_("Console"), "device_serial", PAGE_CHAR,
                       True, None, "console")
-        add_hw_option(_("Channel"), Gtk.STOCK_CONNECT, PAGE_CHAR,
+        add_hw_option(_("Channel"), "device_serial", PAGE_CHAR,
                       self.vm.is_hvm(),
                       _("Not supported for this guest type."),
                       "channel")
-        add_hw_option(_("USB Host Device"), "system-run", PAGE_HOSTDEV,
+        add_hw_option(_("USB Host Device"), "device_usb", PAGE_HOSTDEV,
                       self.conn.support.conn_nodedev(),
                       _("Connection does not support host device enumeration"),
                       "usb")
@@ -246,9 +249,13 @@ class vmmAddHardware(vmmGObjectUI):
         if self.vm.is_container():
             nodedev_enabled = False
             nodedev_errstr = _("Not supported for containers")
-        add_hw_option(_("PCI Host Device"), "system-run", PAGE_HOSTDEV,
+        add_hw_option(_("PCI Host Device"), "device_pci", PAGE_HOSTDEV,
                       nodedev_enabled, nodedev_errstr, "pci")
 
+        add_hw_option(_("MDEV Host Device"), "device_pci", PAGE_HOSTDEV,
+                      self.conn.support.conn_nodedev(),
+                      _("Connection does not support host device enumeration"),
+                      "mdev")
         add_hw_option(_("Video"), "video-display", PAGE_VIDEO, True,
                       _("Libvirt version does not support video devices."))
         add_hw_option(_("Watchdog"), "device_pci", PAGE_WATCHDOG,
@@ -301,6 +308,7 @@ class vmmAddHardware(vmmGObjectUI):
         self.widget("char-path").set_text("")
         self.widget("char-channel").set_text("")
         self.widget("char-auto-socket").set_active(True)
+        self.widget("char-vdagent-clipboard").set_active(True)
 
 
         # RNG params
@@ -312,9 +320,9 @@ class vmmAddHardware(vmmGObjectUI):
 
         # Remaining devices
         self._fsdetails.reset_state()
-        self.widget("tpm-device-path").set_text("/dev/tpm0")
         self._gfxdetails.reset_state()
         self._vsockdetails.reset_state()
+        self._tpmdetails.reset_state()
 
     @staticmethod
     def change_config_helper(define_func, define_args, vm, err,
@@ -392,7 +400,8 @@ class vmmAddHardware(vmmGObjectUI):
                DeviceSerial.TYPE_UNIX]
         if char_class.XML_NAME == "channel":
             ret = [DeviceSerial.TYPE_SPICEVMC,
-                   DeviceSerial.TYPE_SPICEPORT] + ret
+                   DeviceSerial.TYPE_SPICEPORT,
+                   DeviceSerial.TYPE_QEMUVDAGENT] + ret
         return ret
 
     @staticmethod
@@ -418,6 +427,7 @@ class vmmAddHardware(vmmGObjectUI):
             DeviceSerial.TYPE_UNIX: _("UNIX socket"),
             DeviceSerial.TYPE_SPICEVMC: _("Spice agent"),
             DeviceSerial.TYPE_SPICEPORT: _("Spice port"),
+            DeviceSerial.TYPE_QEMUVDAGENT: _("QEMU vdagent"),
         }
         return labels.get(val, val)
 
@@ -501,23 +511,6 @@ class vmmAddHardware(vmmGObjectUI):
             "xen": _("Xen"),
         }
         return bus_mappings.get(bus, bus)
-
-    @staticmethod
-    def tpm_pretty_type(val):
-        labels = {
-            DeviceTpm.TYPE_PASSTHROUGH: _("Passthrough device"),
-            DeviceTpm.TYPE_EMULATOR: _("Emulated device"),
-        }
-        return labels.get(val, val)
-
-    @staticmethod
-    def tpm_pretty_model(val):
-        labels = {
-            DeviceTpm.MODEL_TIS: _("TIS"),
-            DeviceTpm.MODEL_CRB: _("CRB"),
-            DeviceTpm.MODEL_SPAPR: _("SPAPR"),
-        }
-        return labels.get(val, val)
 
     @staticmethod
     def panic_pretty_model(val):
@@ -619,7 +612,7 @@ class vmmAddHardware(vmmGObjectUI):
         if guest.conn.is_xen():
             return ["xen", "vga"]
         if guest.conn.is_qemu() or guest.conn.is_test():
-            return ["vga", "bochs", "qxl", "virtio", "ramfb"]
+            return ["vga", "bochs", "qxl", "virtio", "ramfb", "none"]
         return []
 
     @staticmethod
@@ -655,6 +648,9 @@ class vmmAddHardware(vmmGObjectUI):
             label += (" %s:%s:%s.%s" %
                       (dehex(hostdev.domain), dehex(hostdev.bus),
                        dehex(hostdev.slot), dehex(hostdev.function)))
+
+        elif hostdev.uuid:
+            label += " %s" % (str(hostdev.uuid))
 
         return label
 
@@ -746,15 +742,24 @@ class vmmAddHardware(vmmGObjectUI):
 
     def _build_hostdev_treeview(self):
         host_dev = self.widget("host-device")
-        # [ xmlobj, label]
-        host_dev_model = Gtk.ListStore(object, str)
+        # [ xmlobj, label, sensitive, tooltip]
+        host_dev_model = Gtk.ListStore(object, str, bool, str)
         host_dev.set_model(host_dev_model)
         host_col = Gtk.TreeViewColumn()
         text = Gtk.CellRendererText()
         host_col.pack_start(text, True)
         host_col.add_attribute(text, 'text', 1)
+        host_col.add_attribute(text, 'sensitive', 2)
+        host_dev.set_tooltip_column(3)
         host_dev_model.set_sort_column_id(1, Gtk.SortType.ASCENDING)
         host_dev.append_column(host_col)
+
+
+    def _hostdev_row_selected_cb(self, selection):
+        model, treeiter = selection.get_selected()
+        sensitive = treeiter and model[treeiter][2] or False
+        self.widget("create-finish").set_sensitive(sensitive)
+
 
     def _populate_hostdev_model(self, devtype):
         devlist = self.widget("host-device")
@@ -775,11 +780,30 @@ class vmmAddHardware(vmmGObjectUI):
                     if dev.xmlobj.name == subdev.xmlobj.parent:
                         prettyname += " (%s)" % subdev.pretty_name()
 
-            model.append([dev.xmlobj, prettyname])
+            # parent device names are appended with mdev names in
+            # libvirt 7.8.0
+            if devtype == "mdev" and len(prettyname) <= 41:
+                for parentdev in self.conn.list_nodedevs():
+                    if dev.xmlobj.parent == parentdev.xmlobj.name:
+                        prettyname = "%s %s" % (
+                                parentdev.pretty_name(), prettyname)
+
+            tooltip = None
+            sensitive = dev.is_active()
+            if not sensitive:
+                tooltip = _("%s is not active in the host system.\n"
+                      "Please start the mdev in the host system before "
+                      "adding it to the guest.") % prettyname
+            model.append([dev.xmlobj, prettyname, sensitive, tooltip])
 
         if len(model) == 0:
-            model.append([None, _("No Devices Available")])
+            model.append([None, _("No Devices Available"), False, None])
+
         uiutil.set_list_selection_by_number(devlist, 0)
+
+        devlist.get_selection().connect(
+                "changed", self._hostdev_row_selected_cb)
+        devlist.get_selection().emit("changed")
 
 
     @staticmethod
@@ -844,50 +868,6 @@ class vmmAddHardware(vmmGObjectUI):
     def _build_redir_type_combo(self):
         values = [["spicevmc", _("Spice channel")]]
         uiutil.build_simple_combo(self.widget("usbredir-list"), values)
-
-
-    def _build_tpm_type_combo(self, vm):
-        values = []
-        for t in DeviceTpm.TYPES:
-            values.append([t, vmmAddHardware.tpm_pretty_type(t)])
-        uiutil.build_simple_combo(self.widget("tpm-type"), values)
-        values = []
-        for t in vmmAddHardware._get_tpm_model_list(vm, None):
-            values.append([t, vmmAddHardware.tpm_pretty_model(t)])
-        uiutil.build_simple_combo(self.widget("tpm-model"), values)
-        values = []
-        for t in DeviceTpm.VERSIONS:
-            values.append([t, t])
-        uiutil.build_simple_combo(self.widget("tpm-version"), values,
-                default_value=DeviceTpm.VERSION_2_0)
-
-    @staticmethod
-    def _get_tpm_model_list(vm, tpmversion):
-        mod_list = []
-        if vm.is_hvm():
-            if vm.xmlobj.os.is_pseries():
-                mod_list.append("tpm-spapr")
-            else:
-                mod_list.append("tpm-tis")
-                if tpmversion != '1.2':
-                    mod_list.append("tpm-crb")
-            mod_list.sort()
-        return mod_list
-
-    @staticmethod
-    def populate_tpm_model_combo(vm, combo, tpmversion):
-        model = combo.get_model()
-        model.clear()
-
-        mod_list = vmmAddHardware._get_tpm_model_list(vm, tpmversion)
-        for m in mod_list:
-            model.append([m, vmmAddHardware.tpm_pretty_model(m)])
-        combo.set_active(0)
-
-    @staticmethod
-    def build_tpm_model_combo(vm, combo, tpmversion):
-        uiutil.build_simple_combo(combo, [])
-        vmmAddHardware.populate_tpm_model_combo(vm, combo, tpmversion)
 
 
     def _build_panic_model_combo(self):
@@ -981,11 +961,13 @@ class vmmAddHardware(vmmGObjectUI):
 
         if page == PAGE_HOSTDEV:
             # Need to do this here, since we share the hostdev page
-            # between two different HW options
+            # between different HW options
             row = self._get_hw_selection()
             devtype = "usb_device"
             if row and row[5] == "pci":
                 devtype = "pci"
+            if row and row[5] == "mdev":
+                devtype = "mdev"
             self._populate_hostdev_model(devtype)
 
         if page == PAGE_CONTROLLER:
@@ -1036,6 +1018,8 @@ class vmmAddHardware(vmmGObjectUI):
             row = self._get_hw_selection()
             if row and row[5] == "pci":
                 return _("PCI Device")
+            if row and row[5] == "mdev":
+                return _("MDEV Device")
             return _("USB Device")
 
         raise RuntimeError("Unknown page %s" % page)  # pragma: no cover
@@ -1092,19 +1076,6 @@ class vmmAddHardware(vmmGObjectUI):
         else:
             self.widget("create-mac-address").set_sensitive(False)
 
-    def _change_tpm_device_type(self, src):
-        devtype = uiutil.get_list_selection(src)
-        if devtype is None:
-            return  # pragma: no cover
-
-        dev = DeviceTpm(self.conn.get_backend())
-        dev.type = devtype
-
-        uiutil.set_grid_row_visible(self.widget("tpm-device-path-label"),
-                devtype == dev.TYPE_PASSTHROUGH)
-        uiutil.set_grid_row_visible(self.widget("tpm-version-label"),
-                devtype == dev.TYPE_EMULATOR)
-
     def _change_char_auto_socket(self, src):
         if not src.get_visible():
             return
@@ -1146,11 +1117,14 @@ class vmmAddHardware(vmmGObjectUI):
         supports_path = [dev.TYPE_FILE, dev.TYPE_UNIX,
                          dev.TYPE_DEV, dev.TYPE_PIPE]
         supports_channel = [dev.TYPE_SPICEPORT]
+        supports_clipboard = [dev.TYPE_QEMUVDAGENT]
 
         uiutil.set_grid_row_visible(self.widget("char-path-label"),
                 devtype in supports_path)
         uiutil.set_grid_row_visible(self.widget("char-channel-label"),
                 devtype in supports_channel)
+        uiutil.set_grid_row_visible(self.widget("char-vdagent-clipboard-label"),
+                devtype in supports_clipboard)
 
         uiutil.set_grid_row_visible(
             self.widget("char-target-name-label"), ischan)
@@ -1504,6 +1478,7 @@ class vmmAddHardware(vmmGObjectUI):
         source_channel = self.widget("char-channel").get_text()
         target_name = self.widget("char-target-name").get_child().get_text()
         target_type = uiutil.get_list_selection(typebox)
+        clipboard = self.widget("char-vdagent-clipboard").get_active()
 
         if not self.widget("char-path").get_visible():
             source_path = None
@@ -1518,6 +1493,7 @@ class vmmAddHardware(vmmGObjectUI):
         dev.type = devtype
         dev.source.path = source_path
         dev.source.channel = source_channel
+        dev.source.clipboard_copypaste = clipboard
         dev.target_name = target_name
         dev.target_type = target_type
         return dev
@@ -1552,22 +1528,7 @@ class vmmAddHardware(vmmGObjectUI):
         return dev
 
     def _build_tpm(self):
-        typ = uiutil.get_list_selection(self.widget("tpm-type"))
-        model = uiutil.get_list_selection(self.widget("tpm-model"))
-        device_path = self.widget("tpm-device-path").get_text()
-        version = uiutil.get_list_selection(self.widget("tpm-version"))
-
-        if not self.widget("tpm-device-path").get_visible():
-            device_path = None
-        if not self.widget("tpm-version").get_visible():
-            version = None
-
-        dev = DeviceTpm(self.conn.get_backend())
-        dev.type = typ
-        dev.model = model
-        dev.device_path = device_path
-        dev.version = version
-        return dev
+        return self._tpmdetails.build_device()
 
     def _build_panic(self):
         model = uiutil.get_list_selection(self.widget("panic-model"))

@@ -20,7 +20,7 @@ def _run_initrd_commands(initrd, tempdir):
                                  stderr=subprocess.PIPE,
                                  cwd=tempdir)
     cpio_proc = subprocess.Popen(['cpio', '--create', '--null', '--quiet',
-                                  '--format=newc', '--owner=+0:+0'],
+                                  '--format=newc', '--owner=root:root'],
                                  stdin=find_proc.stdout,
                                  stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE,
@@ -43,12 +43,19 @@ def _run_initrd_commands(initrd, tempdir):
     if gziperr:  # pragma: no cover
         log.debug("gzip stderr=%s", gziperr)
 
+    if (cpio_proc.returncode != 0 or
+        find_proc.returncode != 0 or
+        gzip_proc.returncode != 0):  # pragma: no cover
+        raise RuntimeError("Failed to inject files into initrd")
+
 
 def _run_iso_commands(iso, tempdir, cloudinit=False):
-    # Some distros do not link mkisofs to genisoimage (or vice-versa). As a
-    # result of this, we have to actually check for both programs and use the
-    # most appropriate one.
-    programs = ["genisoimage", "mkisofs"]
+    # These three programs all behave similarly for our needs, and
+    # different distros only have some available. xorriso is apparently
+    # the actively maintained variant that should be available everywhere
+    # and without any license issues. Some more info here:
+    # https://wiki.debian.org/genisoimage
+    programs = ["xorrisofs", "genisoimage", "mkisofs"]
     for program in programs:
         if shutil.which(program):
             break
