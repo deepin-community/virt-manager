@@ -352,7 +352,8 @@ class Guest(XMLBuilder):
         if (self.os.is_arm_machvirt() or
             self.os.is_riscv_virt() or
             self.os.is_s390x() or
-            self.os.is_pseries()):
+            self.os.is_pseries() or
+            self.os.is_loongarch64()):
             return True
 
         if not os_support:
@@ -541,7 +542,7 @@ class Guest(XMLBuilder):
             # and doesn't break QEMU internal snapshots
             prefer_efi = self.osinfo.requires_firmware_efi(self.os.arch)
         else:
-            prefer_efi = self.os.is_arm_machvirt() or self.conn.is_bhyve()
+            prefer_efi = self.os.is_arm_machvirt() or self.conn.is_bhyve() or self.os.is_loongarch64()
 
         log.debug("Prefer EFI => %s", prefer_efi)
         return prefer_efi
@@ -902,7 +903,8 @@ class Guest(XMLBuilder):
             usb_tablet = True
         if (self.os.is_arm_machvirt() or
             self.os.is_riscv_virt() or
-            self.os.is_pseries()):
+            self.os.is_pseries() or
+            self.os.is_loongarch64()):
             usb_tablet = True
             usb_keyboard = True
 
@@ -984,7 +986,10 @@ class Guest(XMLBuilder):
             # For pseries, we always assume OS supports usb3
             if qemu_usb3:
                 usb3 = True
-
+        elif self.os.is_loongarch64():
+            # For loongarch64, we always assume OS supports usb3
+            if qemu_usb3:
+                usb3 = True
 
         if usb2:
             for dev in DeviceController.get_usb2_controllers(self.conn):
@@ -1016,7 +1021,8 @@ class Guest(XMLBuilder):
         if self.os.is_container() and not self.conn.is_vz():
             return
         if (not self.os.is_x86() and
-            not self.os.is_pseries()):
+            not self.os.is_pseries() and
+            not self.os.is_loongarch64()):
             return
         self.add_device(DeviceGraphics(self.conn))
 
@@ -1029,7 +1035,8 @@ class Guest(XMLBuilder):
                 self.os.is_arm_machvirt() or
                 self.os.is_riscv_virt() or
                 self.os.is_s390x() or
-                self.os.is_pseries()):
+                self.os.is_pseries() or
+                self.os.is_loongarch64()):
             return
 
         if (self.conn.is_qemu() and
@@ -1074,7 +1081,8 @@ class Guest(XMLBuilder):
                 self.os.is_arm_machvirt() or
                 self.os.is_riscv_virt() or
                 self.os.is_s390x() or
-                self.os.is_pseries()):
+                self.os.is_pseries() or
+                self.os.is_loongarch64()):
             return
 
         if self.osinfo.supports_virtioballoon(self._extra_drivers):
@@ -1100,6 +1108,8 @@ class Guest(XMLBuilder):
         if self.os.is_arm_machvirt():
             return True
         if self.os.is_riscv_virt():
+            return True
+        if self.os.is_loongarch64():
             return True
         return False
 
