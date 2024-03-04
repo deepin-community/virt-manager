@@ -67,6 +67,7 @@ TEST_DATA = {
     'URI-KVM-X86': utils.URIs.kvm_x86,
     'URI-KVM-ARMV7L': utils.URIs.kvm_armv7l,
     'URI-KVM-AARCH64': utils.URIs.kvm_aarch64,
+    'URI-KVM-LOONGARCH64': utils.URIs.kvm_loongarch64,
     'URI-KVM-PPC64LE': utils.URIs.kvm_ppc64le,
     'URI-KVM-S390X': utils.URIs.kvm_s390x,
     'URI-QEMU-RISCV64': utils.URIs.qemu_riscv64,
@@ -1176,6 +1177,19 @@ c.add_compare("--arch aarch64 --cdrom %(ISO-F26-NETINST)s --boot loader=CODE.fd,
 c.add_compare("--connect %(URI-KVM-AARCH64)s --disk %(EXISTIMG1)s --import --os-variant fedora21 --panic default --graphics vnc", "aarch64-kvm-import")  # --import test, but also test --panic no-op, and --graphics
 c.add_compare("--connect %(URI-KVM-AARCH64)s --disk size=1 --os-variant fedora22 --features gic_version=host --network network=default,address.type=pci --controller type=scsi,model=virtio-scsi,address.type=pci", "aarch64-kvm-gic")
 c.add_compare("--connect %(URI-KVM-AARCH64)s --osinfo fedora30 --arch aarch64 --disk none --pxe --boot firmware=efi", "aarch64-firmware-no-override")
+
+
+
+#####################
+# loongarch64 tests #
+#####################
+
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --network default --graphics none", "loongarch64-headless")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --network default --graphics spice", "loongarch64-graphics")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --boot kernel=/kernel.img,initrd=/initrd.img,cmdline='root=/dev/vda2'", "loongarch64-kernel-boot")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --cloud-init", "loongarch64-cloud-init")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --cdrom %(ISO-F26-NETINST)s", "loongarch64-cdrom")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --unattended", "loongarch64-unattended")
 
 
 
