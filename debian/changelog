@@ -1,3 +1,27 @@
+virt-manager (1:4.1.0-4) unstable; urgency=medium
+
+  [ Fabio Fantoni ]
+  [ Pino Toscano ]
+  * d/patches: backport fixes from upstream for compatibility with newer
+    versions of libvirt. (Closes: #1064672)
+
+  [ Pino Toscano ]
+  * Drop the usage of distutils: (Closes: #1066002)
+    - backport upstream patches to fully use setuptools when it has all the
+      features needed
+    - drop the python3-distutils build dependency, no more explicitly used
+  * Bump Standards-Version to 4.7.0, no changes required.
+
+ -- Pino Toscano <pino@debian.org>  Thu, 09 May 2024 10:08:26 +0200
+
+virt-manager (1:4.1.0-3) unstable; urgency=medium
+
+  * Add test-only locales-all build dependency, for the en_US.utf8 locale.
+  * d/patches: fix tests with newer osinfo-db (Closes: #1042147)
+  * Update standards version to 4.6.2, no changes needed.
+
+ -- Pino Toscano <pino@debian.org>  Fri, 01 Sep 2023 22:13:14 +0200
+
 virt-manager (1:4.1.0-2) unstable; urgency=medium
 
   [ Stefano Rivera ]

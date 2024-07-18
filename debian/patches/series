@@ -1,0 +1,5 @@
+upstream_tests-data-refresh-Fedora-tree-URLs-in-virt-install-.patch
+upstream_tests-cli-Adjust-hotplug-test-for-latest-libvirt.patch
+upstream_tests-Fix-host-copy-XML-with-libvirt-10.1.0.patch
+upstream_build-use-super.patch
+upstream_build-use-setuptools.command.build-when-available.patch

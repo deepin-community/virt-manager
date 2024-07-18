@@ -5,7 +5,7 @@ Maintainer: Debian Libvirt Maintainers <pkg-libvirt-maintainers@lists.alioth.deb
 Uploaders:
  Guido Günther <agx@sigxcpu.org>,
  Pino Toscano <pino@debian.org>,
-Standards-Version: 4.6.1
+Standards-Version: 4.7.0
 Vcs-Git: https://salsa.debian.org/libvirt-team/virt-manager.git
 Vcs-Browser: https://salsa.debian.org/libvirt-team/virt-manager
 Homepage: https://virt-manager.org/
@@ -15,7 +15,6 @@ Build-Depends:
  dh-sequence-python3,
  gettext,
  python3,
- python3-distutils,
  python3-docutils,
  python3-setuptools,
 # for the tests
@@ -25,6 +24,7 @@ Build-Depends:
  gir1.2-libvirt-glib-1.0 <!nocheck>,
  libglib2.0-bin <!nocheck>,
  libvirt-daemon <!nocheck>,
+ locales-all <!nocheck>,
  python3-argcomplete <!nocheck>,
  python3-gi (>= 3.31.3~) <!nocheck>,
  python3-libvirt <!nocheck>,
