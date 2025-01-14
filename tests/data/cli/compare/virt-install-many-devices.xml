@@ -134,22 +134,35 @@
     <viridian/>
     <pmu state="off"/>
     <hyperv>
-      <reset state="on"/>
-      <vapic state="on"/>
       <relaxed state="off"/>
+      <vapic state="on"/>
       <spinlocks state="on" retries="5678"/>
+      <vpindex state="on"/>
+      <runtime state="on"/>
       <synic state="on"/>
+      <stimer state="on">
+        <direct state="on"/>
+      </stimer>
+      <reset state="on"/>
+      <frequencies state="on"/>
+      <reenlightenment state="on"/>
+      <tlbflush state="on"/>
+      <ipi state="on"/>
+      <evmcs state="on"/>
+      <avic state="on"/>
     </hyperv>
     <vmport state="off"/>
     <kvm>
       <hidden state="off"/>
       <hint-dedicated state="on"/>
       <poll-control state="on"/>
+      <pv-ipi state="on"/>
     </kvm>
     <pvspinlock state="off"/>
     <smm state="off"/>
     <vmcoreinfo state="on"/>
     <ioapic driver="qemu"/>
+    <msrs unknown="ignore"/>
   </features>
   <cpu mode="custom" match="strict" check="partial">
     <model fallback="allow" vendor_id="GenuineIntel">foobar</model>
@@ -194,6 +207,7 @@
         <bandwidth initiator="0" target="2" cache="1" type="access" value="409600" unit="KiB"/>
       </interconnects>
     </numa>
+    <maxphysaddr mode="emulate" bits="46"/>
   </cpu>
   <clock offset="utc">
     <timer name="pit" tickpolicy="catchup" present="yes"/>
@@ -423,6 +437,26 @@
       </source>
       <target dev="vdu" bus="virtio"/>
     </disk>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2" discard="unmap">
+        <metadata_cache>
+          <max_size unit="KiB">2048</max_size>
+        </metadata_cache>
+      </driver>
+      <source file="/tmp/disk1.qcow2"/>
+      <target dev="vdv" bus="virtio"/>
+    </disk>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2" discard="unmap" discard_no_unref="on"/>
+      <source file="/tmp/disk2.qcow2"/>
+      <target dev="vdw" bus="virtio"/>
+    </disk>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2" discard="unmap"/>
+      <source file="/tmp/disk3.qcow2"/>
+      <target dev="vdx" bus="virtio"/>
+      <blockio discard_granularity="4096"/>
+    </disk>
     <controller type="usb" index="0" model="ich9-ehci1">
       <address type="pci" domain="0" bus="0" slot="4" function="7"/>
     </controller>
@@ -499,9 +533,7 @@
       <readonly/>
       <space_hard_limit>1234</space_hard_limit>
       <space_soft_limit>500</space_soft_limit>
-      <source pool="pool1" volume="vol">
-        <socket>/tmp/foo.sock</socket>
-      </source>
+      <source pool="pool1" volume="vol" socket="/tmp/foo.sock"/>
       <target dir="/foo"/>
       <binary path="/foo/virtiofsd" xattr="off">
         <cache mode="always"/>
@@ -588,6 +620,77 @@
       <mac address="00:11:22:33:44:55"/>
       <model type="vmxnet3"/>
     </interface>
+    <interface type="user">
+      <backend type="passt" logFile="/tmp/foo.log"/>
+      <mac address="00:11:22:33:44:55"/>
+      <model type="virtio"/>
+      <portForward proto="tcp" address="192.168.10.10" dev="eth0">
+        <range start="4000" end="5000" to="10000" exclude="no"/>
+        <range start="6000"/>
+      </portForward>
+      <portForward proto="tcp">
+        <range start="2022" to="22"/>
+      </portForward>
+    </interface>
+    <interface type="user">
+      <backend type="passt"/>
+      <mac address="00:11:22:33:44:55"/>
+      <model type="virtio"/>
+      <portForward proto="tcp">
+        <range start="8080" to="80"/>
+      </portForward>
+    </interface>
+    <interface type="user">
+      <backend type="passt"/>
+      <mac address="00:11:22:33:44:55"/>
+      <model type="virtio"/>
+      <portForward proto="tcp">
+        <range start="8080"/>
+      </portForward>
+    </interface>
+    <interface type="user">
+      <backend type="passt"/>
+      <mac address="00:11:22:33:44:55"/>
+      <model type="virtio"/>
+      <portForward proto="udp">
+        <range start="7000" end="8000"/>
+      </portForward>
+      <portForward proto="tcp" address="127.0.0.1">
+        <range start="2222" to="22"/>
+      </portForward>
+    </interface>
+    <interface type="user">
+      <backend type="passt"/>
+      <mac address="00:11:22:33:44:55"/>
+      <model type="virtio"/>
+      <portForward proto="tcp" address="2001:db8:ac10:fd01::1:10">
+        <range start="3000" end="4000" to="30"/>
+      </portForward>
+      <portForward proto="tcp" address="127.0.0.1">
+        <range start="5000" end="6000" to="5"/>
+      </portForward>
+    </interface>
+    <interface type="hostdev">
+      <mac address="00:11:22:33:44:55"/>
+      <model type="virtio"/>
+      <source>
+        <address type="pci" domain="0" bus="0" slot="7" function="0"/>
+      </source>
+    </interface>
+    <interface type="hostdev" managed="yes">
+      <mac address="00:11:22:33:44:55"/>
+      <model type="virtio"/>
+      <source>
+        <address type="pci" domain="0" bus="0" slot="9" function="0"/>
+      </source>
+    </interface>
+    <interface type="hostdev" managed="yes">
+      <mac address="00:11:22:33:44:55"/>
+      <model type="virtio"/>
+      <source>
+        <address type="pci" domain="0" bus="0" slot="4" function="0"/>
+      </source>
+    </interface>
     <smartcard mode="passthrough" type="spicevmc"/>
     <smartcard mode="host" type="tcp"/>
     <smartcard mode="passthrough" type="spicevmc"/>
@@ -658,8 +761,8 @@
       <target type="virtio" name="com.redhat.spice.0"/>
     </channel>
     <input type="keyboard" bus="usb"/>
-    <input type="tablet" bus="usb"/>
-    <input type="mouse" bus="ps2"/>
+    <input type="tablet"/>
+    <input type="mouse"/>
     <input type="mouse" bus="virtio" model="virtio-non-transitional"/>
     <input type="passthrough" bus="virtio">
       <source evdev="/dev/input/event1"/>
@@ -675,13 +778,18 @@
       <backend type="passthrough" version="2.0" persistent_state="yes">
         <device path="/dev/tpm0"/>
         <encryption secret="11111111-2222-3333-4444-5555555555"/>
+        <active_pcr_banks>
+          <sha1/>
+          <sha256/>
+          <sha384/>
+          <sha512/>
+        </active_pcr_banks>
       </backend>
-      <active_pcr_banks>
-        <sha1/>
-        <sha256/>
-        <sha384/>
-        <sha512/>
-      </active_pcr_banks>
+    </tpm>
+    <tpm model="tpm-tis">
+      <backend type="emulator" version="2.0" debug="3">
+        <source type="dir" path="/some/dir"/>
+      </backend>
     </tpm>
     <graphics type="sdl" display=":3.4" xauth="/tmp/.Xauthority">
       <ab>cd</ab>
@@ -741,6 +849,8 @@
       <codec type="duplex"/>
       <codec type="output"/>
     </sound>
+    <sound model="usb" multichannel="yes"/>
+    <sound model="virtio" streams="4"/>
     <audio type="spice" id="1"/>
     <audio type="pulseaudio" id="2"/>
     <video>
@@ -753,6 +863,11 @@
     </video>
     <video>
       <model type="qxl" vram="3" heads="4" vgamem="1" ram="2" vram64="65">
+        <acceleration accel3d="yes"/>
+      </model>
+    </video>
+    <video>
+      <model type="virtio" blob="on">
         <acceleration accel3d="yes"/>
       </model>
     </video>
@@ -842,25 +957,6 @@
         <char>/dev/pty7</char>
       </source>
     </hostdev>
-    <hostdev mode="subsystem" type="mdev" managed="no" model="vfio-ccw">
-      <address type="ccw" cssid="0xfe" ssid="0x1" devno="0x0008"/>
-      <source>
-        <address uuid="8e37ee90-2b51-45e3-9b25-bf8283c03110"/>
-      </source>
-    </hostdev>
-    <hostdev mode="subsystem" type="mdev" managed="no" model="vfio-ap">
-      <source>
-        <address uuid="11f92c9d-b0b0-4016-b306-a8071277f8b9"/>
-      </source>
-    </hostdev>
-    <hostdev mode="subsystem" type="mdev" managed="yes" model="vfio-pci" display="off" ramfb="off">
-      <address type="pci" domain="0" bus="1" slot="1" function="0">
-        <zpci uid="0x0001" fid="0x00000001"/>
-      </address>
-      <source>
-        <address uuid="4b20d080-1b54-4048-85b3-a6a62d165c01"/>
-      </source>
-    </hostdev>
     <redirdev bus="usb" type="spicevmc"/>
     <redirdev bus="usb" type="tcp">
       <source host="localhost" service="4000"/>
@@ -896,7 +992,7 @@
       </backend>
       <rate bytes="1234" period="1000"/>
     </rng>
-    <panic model="isa">
+    <panic>
       <address type="isa" iobase="0x500" irq="5"/>
     </panic>
     <shmem name="shmem0" role="master">

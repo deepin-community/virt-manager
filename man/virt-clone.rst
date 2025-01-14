@@ -121,15 +121,15 @@ storage options via -file.
 
 
 ``--preserve-data``
-    No storage is cloned: disk images specific by --file are preserved as is,
+    No storage is cloned: disk images specified by --file are preserved as is,
     and referenced in the new clone XML. This is useful if you want to clone
     a VM XML template, but not the storage contents.
 
 
 ``--reflink``
-    When --reflink is specified, perform a lightweight copy. This is much faster
-    if source images and destination images are all on the same btrfs filesystem.
-    If COW copy is not possible, then virt-clone fails.
+    Perform a lightweight copy. This is much faster if source images and destination
+    images are all on the same btrfs filesystem. This only works for raw format disk
+    images, any non-raw images will not attempt to use refink
 
 
 ``-m``, ``--mac`` MAC
@@ -144,8 +144,10 @@ storage options via -file.
 
 
 ``--replace``
-    Shutdown and remove any existing guest with the passed ``--name`` before
-    cloning the original guest.
+    Before cloning, try a simple ``virsh destroy`` and ``virsh undefine`` on
+    any existing VM with the passed ``--name``. If those operations fail (like
+    when ``virsh undefine`` requires ``--nvram`` flag), the clone will fail
+    and you will need to manually remove the existing VM.
 
 
 ``-h``, ``--help``

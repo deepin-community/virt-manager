@@ -197,6 +197,53 @@ GUEST OS OPTIONS
     See virt-install(1) documentation for more details about ``--os-variant/--osinfo``
 
 
+CONVERSION OPTIONS
+==================
+
+``--convert-to-q35``
+^^^^^^^^^^^^^^^^^^^^
+
+**Syntax:** ``--convert-to-q35`` [OPTIONS]
+
+Convert an existing VM config from PC/i440FX to Q35 machine type.
+This largely consists of:
+
+* Convert device topology from PCI to PCIe
+* Convert any IDE storage to SATA
+
+You may need to make config changes inside the VM to handle this as well.
+For example, Windows 10 may not find the boot device after IDE to SATA conversion.
+But booting into safe mode once may fix it.
+
+Sub options are:
+
+``num_pcie_root_ports=NUM``
+    Control the number of default ``pcie-root-port`` controller devices
+    we add to the VM by default.
+
+
+``--convert-to-vnc``
+^^^^^^^^^^^^^^^^^^^^
+
+**Syntax:** ``--convert-to-vnc`` [OPTIONS]
+
+Convert an existing VM to exclusively use a single VNC graphics device.
+
+It will attempt to remove all references to any non-VNC graphics config, like
+Spice. For example:
+
+* ``qxl`` devices will be replaced
+* all ``spicevmc`` and ``spiceport`` devices will be removed
+* spice GL will be converted to ``egl-headless``
+
+Sub options are:
+
+``qemu-vdagent=on|off``
+    Add a ``qemu-vdagent`` device if one is not already configured.
+    This replaces some functionality of the spice vdagent.
+    This defaults to ``off`` but that could change in the future.
+
+
 XML OPTIONS
 ===========
 

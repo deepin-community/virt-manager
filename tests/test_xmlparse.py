@@ -77,7 +77,7 @@ def testAlterGuest():
 
     check = _make_checker(guest)
 
-    # Check specific vcpu_current behaviro
+    # Check specific vcpu_current behavior
     check("vcpus", 5, 10)
     assert guest.vcpu_current is None
     check("vcpu_current", None, 15)
@@ -163,6 +163,7 @@ def testAlterGuest():
     check("pvspinlock", None, True)
     check("gic_version", None, False)
     check("ioapic_driver", None, "qemu")
+    check("kvm_pv_ipi", None, False)
 
     check = _make_checker(guest.cpu)
     check("match", "exact", "strict")
@@ -699,7 +700,8 @@ def testChangeSnapshot():
     check("description", "offline desk", "foo\nnewline\n   indent")
     check("parent", "offline-root", "newparent")
     check("creationTime", 1375905916, 1234)
-    check("memory_type", "no", "internal")
+    check("memory_type", "no", "external")
+    check("memory_file", None, "/some/path/to/memory.img")
 
     check = _make_checker(snap.disks[0])
     check("name", "hda", "hdb")
@@ -1170,3 +1172,60 @@ def testDiskSourceAbspath():
     # ...unless it's a URL
     disk.set_source_path("http://example.com/foobar3")
     assert disk.get_source_path() == "http://example.com/foobar3"
+
+
+def testUnknownEmulatorDomcapsLookup(monkeypatch):
+    """
+    Libvirt can handle defining a VM with a custom emulator, one not detected
+    by `virsh capabilities`. An appropriate `virsh domcapabilities` call will
+    inspect the emulator and return relevant info.
+
+    This test ensures that for parsing XML the `virsh capabilities` failure
+    isn't fatal, and we attempt to return valid `virsh domcapabilities` data
+    """
+
+    seen = False
+    def fake_build_from_params(conn, emulator, arch, machine, _hvtype):
+        nonlocal seen
+        seen = True
+        assert arch == "mips"
+        assert machine == "some-unknown-machine"
+        assert emulator == "/my/manual/emulator"
+        return virtinst.DomainCapabilities(conn)
+
+    monkeypatch.setattr(
+        "virtinst.DomainCapabilities.build_from_params",
+        fake_build_from_params)
+
+    conn = utils.URIs.open_kvm()
+    xml = open(DATADIR + "emulator-custom.xml").read()
+    guest = virtinst.Guest(conn, xml)
+    assert guest.lookup_domcaps()
+    assert guest.lookup_domcaps()
+    assert seen
+
+
+def testConvertToQ35():
+    conn = utils.URIs.openconn(utils.URIs.kvm_x86)
+
+    def _test(filename_base, **kwargs):
+        guest, outfile = _get_test_content(conn, filename_base)
+        guest.convert_to_q35(**kwargs)
+        _alter_compare(conn, guest.get_xml(), outfile)
+
+    _test("convert-to-q35-win10")
+    _test("convert-to-q35-f39", num_pcie_root_ports=5)
+
+
+def testConvertToVNC():
+    conn = utils.URIs.openconn(utils.URIs.kvm_x86)
+
+    def _test(filename_base, **kwargs):
+        guest, outfile = _get_test_content(conn, filename_base)
+        guest.convert_to_vnc(**kwargs)
+        _alter_compare(conn, guest.get_xml(), outfile)
+
+    _test("convert-to-vnc-empty", qemu_vdagent=True)
+    _test("convert-to-vnc-spice-devices")
+    _test("convert-to-vnc-spice-manyopts", qemu_vdagent=True)
+    _test("convert-to-vnc-has-vnc", qemu_vdagent=True)

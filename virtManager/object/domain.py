@@ -425,16 +425,13 @@ class vmmDomain(vmmLibvirtObject):
     def get_install_abort(self):
         return bool(self._install_abort)
 
-    def has_spicevmc_type_redirdev(self):
-        devs = self.xmlobj.devices.redirdev
-        for dev in devs:
-            if dev.type == "spicevmc":
-                return True
-        return False
-
     def has_nvram(self):
         return bool(self.get_xmlobj().is_uefi() or
                     self.get_xmlobj().os.nvram)
+
+    def has_tpm_state(self):
+        return any(tpm.type == "emulator"
+                   for tpm in self.get_xmlobj().devices.tpm)
 
     def is_persistent(self):
         return bool(self._backend.isPersistent())
@@ -472,25 +469,6 @@ class vmmDomain(vmmLibvirtObject):
     def snapshots_supported(self):
         if not self.conn.support.domain_list_snapshots(self._backend):
             return _("Libvirt connection does not support snapshots.")
-
-        if self.list_snapshots():
-            return
-
-        # Check if our disks are all qcow2
-        seen_qcow2 = False
-        for disk in self.get_disk_devices_norefresh():
-            if disk.read_only:
-                continue
-            if disk.is_empty():
-                continue
-            if disk.driver_type == "qcow2":
-                seen_qcow2 = True
-                continue
-            return _("Snapshots are only supported if all writeable disks "
-                     "images allocated to the guest are qcow2 format.")
-        if not seen_qcow2:
-            return _("Snapshots require at least one writeable qcow2 disk "
-                     "image allocated to the guest.")
 
     def get_domain_capabilities(self):
         if not self._domain_caps:
@@ -542,9 +520,9 @@ class vmmDomain(vmmLibvirtObject):
             return None, None
 
         old_nvram_path = self.get_xmlobj().os.nvram
-        if not old_nvram_path:
+        if not old_nvram_path:  # pragma: no cover
             # Probably using firmware=efi which doesn't put nvram
-            # path in the XML. Build the implied path
+            # path in the XML on older libvirt. Build the implied path
             old_nvram_path = os.path.join(
                 self.conn.get_backend().get_libvirt_data_root_dir(),
                 self.conn.get_backend().get_uri_driver(),
@@ -564,10 +542,11 @@ class vmmDomain(vmmLibvirtObject):
         from virtinst import Cloner
         old_nvram = DeviceDisk(self.conn.get_backend())
         old_nvram.set_source_path(old_nvram_path)
+        ext = os.path.splitext(old_nvram_path)[1]
 
         nvram_dir = os.path.dirname(old_nvram.get_source_path())
         new_nvram_path = os.path.join(nvram_dir,
-                "%s_VARS.fd" % os.path.basename(new_name))
+                "%s_VARS%s" % (os.path.basename(new_name), ext or ".fd"))
 
         new_nvram = Cloner.build_clone_disk(
                 old_nvram, new_nvram_path, True, False)
@@ -621,21 +600,11 @@ class vmmDomain(vmmLibvirtObject):
         """
         Remove passed device from the inactive guest XML
         """
-        # If serial and duplicate console are both present, they both need
-        # to be removed at the same time
-        con = None
-        if self.serial_is_console_dup(devobj):
-            con = self.xmlobj.devices.console[0]
-
         xmlobj = self._make_xmlobj_to_define()
         editdev = self._lookup_device_to_define(xmlobj, devobj, False)
         if not editdev:
             return  # pragma: no cover
 
-        if con:
-            rmcon = xmlobj.find_device(con)
-            if rmcon:
-                xmlobj.remove_device(rmcon)
         xmlobj.remove_device(editdev)
 
         self._redefine_xmlobj(xmlobj)
@@ -722,7 +691,10 @@ class vmmDomain(vmmLibvirtObject):
             title=_SENTINEL, loader=_SENTINEL,
             nvram=_SENTINEL, firmware=_SENTINEL):
         guest = self._make_xmlobj_to_define()
+
+        old_machine = None
         if machine != _SENTINEL:
+            old_machine = guest.os.machine
             guest.os.machine = machine
             self._domain_caps = None
         if description != _SENTINEL:
@@ -739,17 +711,21 @@ class vmmDomain(vmmLibvirtObject):
                 # preserve NVRAM paths, so skip clearing all the properties
                 # and let libvirt do it for us.
                 if firmware is None:
-                    # Implies 'default', so clear everything
-                    guest.os.loader_ro = None
-                    guest.os.loader_type = None
-                    guest.os.nvram = None
-                    guest.os.nvram_template = None
+                    guest.disable_uefi()
             else:
                 # Implies UEFI
                 guest.set_uefi_path(loader)
 
         if nvram != _SENTINEL:
             guest.os.nvram = nvram
+
+        if old_machine == "pc" and guest.os.machine == "q35":
+            guest.add_q35_pcie_controllers()
+
+        elif old_machine == "q35" and guest.os.machine == "pc":
+            for dev in guest.devices.controller:
+                if dev.model in ["pcie-root", "pcie-root-port"]:
+                    guest.remove_device(dev)
 
         self._redefine_xmlobj(guest)
 
@@ -1082,6 +1058,9 @@ class vmmDomain(vmmLibvirtObject):
 
         xml = devobj.get_xml()
         log.debug("update_device with xml=\n%s", xml)
+
+        if self.config.CLITestOptions.test_update_device_fail:
+            raise RuntimeError("fake update device failure")
         self._backend.updateDeviceFlags(xml, flags)
 
     def hotplug(self, memory=_SENTINEL, maxmem=_SENTINEL,
@@ -1163,9 +1142,9 @@ class vmmDomain(vmmLibvirtObject):
     def open_console(self, devname, stream, flags=0):
         return self._backend.openConsole(devname, stream, flags)
 
-    def open_graphics_fd(self):
+    def open_graphics_fd(self, idx):
         flags = 0
-        return self._backend.openGraphicsFD(0, flags)
+        return self._backend.openGraphicsFD(idx, flags)
 
     def list_snapshots(self):
         if self._snapshot_list is None:
@@ -1188,13 +1167,16 @@ class vmmDomain(vmmLibvirtObject):
         if will_be_running:
             self._async_set_time()
 
-    def create_snapshot(self, xml, redefine=False):
+    def create_snapshot(self, xml, redefine=False, diskOnly=False):
         flags = 0
         if redefine:
             flags = (flags | libvirt.VIR_DOMAIN_SNAPSHOT_CREATE_REDEFINE)
         else:
+            if diskOnly:
+                flags = (flags | libvirt.VIR_DOMAIN_SNAPSHOT_CREATE_DISK_ONLY)
             log.debug("Creating snapshot flags=%s xml=\n%s", flags, xml)
-        self._backend.snapshotCreateXML(xml, flags)
+        obj = self._backend.snapshotCreateXML(xml, flags)
+        log.debug("returned new snapshot XML:\n%s", obj.getXMLDesc(0))
 
     def _get_agent(self):
         """
@@ -1306,10 +1288,10 @@ class vmmDomain(vmmLibvirtObject):
     def get_arch(self):
         return self.get_xmlobj().os.arch
     def get_init(self):
-        import pipes
+        import shlex
         init = self.get_xmlobj().os.init
         initargs = " ".join(
-            [pipes.quote(i.val) for i in self.get_xmlobj().os.initargs])
+            [shlex.quote(i.val) for i in self.get_xmlobj().os.initargs])
         return init, initargs
 
     def get_emulator(self):
@@ -1425,11 +1407,14 @@ class vmmDomain(vmmLibvirtObject):
         else:
             if self.has_nvram():
                 flags |= getattr(libvirt, "VIR_DOMAIN_UNDEFINE_KEEP_NVRAM", 0)
+            if (self.has_tpm_state() and
+                self.conn.support.domain_undefine_keep_tpm()):
+                flags |= getattr(libvirt, "VIR_DOMAIN_UNDEFINE_KEEP_TPM", 0)
         try:
             self._backend.undefineFlags(flags)
         except libvirt.libvirtError:
             log.exception("libvirt undefineFlags failed, "
-                              "falling back to old style")
+                          "falling back to old style")
             self._backend.undefine()
 
     @vmmLibvirtObject.lifecycle_action

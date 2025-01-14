@@ -11,14 +11,26 @@ from ..xmlbuilder import XMLProperty
 class DeviceVideo(Device):
     XML_NAME = "video"
 
-    _XML_PROP_ORDER = ["model", "vram", "heads", "vgamem"]
-    model = XMLProperty("./model/@type")
+    _XML_PROP_ORDER = ["_model", "vram", "heads", "vgamem"]
     vram = XMLProperty("./model/@vram", is_int=True)
     vram64 = XMLProperty("./model/@vram64", is_int=True)
     ram = XMLProperty("./model/@ram", is_int=True)
     heads = XMLProperty("./model/@heads", is_int=True)
     vgamem = XMLProperty("./model/@vgamem", is_int=True)
     accel3d = XMLProperty("./model/acceleration/@accel3d", is_yesno=True)
+    blob = XMLProperty("./model/@blob", is_onoff=True)
+    primary = XMLProperty("./model/@primary", is_yesno=True)
+
+    def _set_model(self, val):
+        self._model = val
+        if self._model != "qxl":
+            self.ram = None
+            self.vgamem = None
+            self.vram64 = None
+    def _get_model(self):
+        return self._model
+    _model = XMLProperty("./model/@type")
+    model = property(_get_model, _set_model)
 
 
     ##################
@@ -31,6 +43,8 @@ class DeviceVideo(Device):
             return None
         if guest.os.is_pseries():
             return "vga"
+        if guest.os.is_loongarch64():
+            return "virtio"
         if guest.os.is_arm_machvirt():
             # For all cases here the hv and guest are new enough for virtio
             return "virtio"

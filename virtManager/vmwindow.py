@@ -114,7 +114,7 @@ class vmmVMWindow(vmmGObjectUI):
             "on_details_customize_finish_clicked": self.customize_finish,
             "on_details_cancel_customize_clicked": self._customize_cancel_clicked,
 
-            "on_details_menu_virtual_manager_activate": self.control_vm_menu,
+            "on_details_menu_virtual_manager_activate": self._on_menu_virtual_machine_activate_cb,
             "on_details_menu_screenshot_activate": self.control_vm_screenshot,
             "on_details_menu_usb_redirection": self.control_vm_usb_redirection,
             "on_details_menu_view_toolbar_activate": self.toggle_toolbar,
@@ -199,15 +199,15 @@ class vmmVMWindow(vmmGObjectUI):
 
     def _set_initial_window_size(self):
         """
-        We want the window size for new windows to be 1024x768 viewer
+        We want the window size for new windows to be 1280x800 viewer
         size, plus whatever it takes to fit the toolbar+menubar, etc.
         To achieve this, we force the display box to the desired size
         with set_size_request, wait for the window to report it has
         been resized, and then unset the hardcoded size request so
         the user can manually resize the window however they want.
         """
-        w = 1024
-        h = 768
+        w = 1280
+        h = 800
         hid = []
         def win_cb(src, event):
             self.widget("details-pages").set_size_request(-1, -1)
@@ -490,10 +490,8 @@ class vmmVMWindow(vmmGObjectUI):
         else:
             vmmenu.VMActionUI.resume(self, self.vm)
 
-    def control_vm_menu(self, src_ignore):
-        can_usb = bool(self.vm.has_spicevmc_type_redirdev() and
-                       self._console.vmwindow_viewer_has_usb_redirection())
-        self.widget("details-menu-usb-redirection").set_sensitive(can_usb)
+    def _on_menu_virtual_machine_activate_cb(self, src):
+        self._console_refresh_can_usbredir()
 
     def control_vm_run(self, src_ignore):
         if self._details.vmwindow_has_unapplied_changes():
@@ -548,23 +546,30 @@ class vmmVMWindow(vmmGObjectUI):
             ret = ret.buffer  # pragma: no cover
 
         import datetime
+        import os
         now = str(datetime.datetime.now()).split(".")[0].replace(" ", "_")
         default = "Screenshot_%s_%s.png" % (self.vm.get_name(), now)
 
-        path = self.err.browse_local(
-            self.vm.conn, _("Save Virtual Machine Screenshot"),
+        start_folder = self.config.get_default_directory("screenshot")
+
+        filename = self.err.browse_local(
+            _("Save Virtual Machine Screenshot"),
             _type=("png", _("PNG files")),
             dialog_type=Gtk.FileChooserAction.SAVE,
-            browse_reason=self.config.CONFIG_DIR_SCREENSHOT,
-            default_name=default)
-        if not path:  # pragma: no cover
+            choose_label=_("_Save"),
+            start_folder=start_folder,
+            default_name=default,
+            confirm_overwrite=True)
+        if not filename:  # pragma: no cover
             log.debug("No screenshot path given, skipping save.")
             return
 
-        filename = path
         if not filename.endswith(".png"):
             filename += ".png"  # pragma: no cover
         open(filename, "wb").write(ret)
+
+        self.config.set_default_directory(
+                "screenshot", os.path.dirname(filename))
 
 
     ########################
@@ -602,24 +607,30 @@ class vmmVMWindow(vmmGObjectUI):
 
         paused = self.vm.is_paused()
         is_viewer = self._console.vmwindow_get_viewer_is_visible()
-        can_usb = self._console.vmwindow_get_can_usb_redirect()
 
         self.widget("details-menu-vm-screenshot").set_sensitive(is_viewer)
-        self.widget("details-menu-usb-redirection").set_sensitive(can_usb)
         keycombo_menu = self._console.vmwindow_get_keycombo_menu()
 
         can_sendkey = (is_viewer and not paused)
         for c in keycombo_menu.get_children():
             c.set_sensitive(can_sendkey)
 
+        self._console_refresh_can_usbredir()
         self._console_refresh_can_fullscreen()
         self._console_refresh_resizeguest_from_settings()
+
+    def _console_refresh_can_usbredir(self):
+        can_usb = self._console.vmwindow_viewer_can_usb_redirect()
+        self.widget("details-menu-usb-redirection").set_sensitive(
+                bool(can_usb))
 
     def _console_refresh_can_fullscreen(self):
         allow_fullscreen = self._console.vmwindow_get_viewer_is_visible()
 
         self.widget("control-fullscreen").set_sensitive(allow_fullscreen)
         self.widget("details-menu-view-fullscreen").set_sensitive(
+            allow_fullscreen)
+        self.widget("detains-menu-view-size-to-vm").set_sensitive(
             allow_fullscreen)
 
     def _console_refresh_scaling_from_settings(self):
@@ -673,9 +684,7 @@ class vmmVMWindow(vmmGObjectUI):
         val = self.vm.get_console_resizeguest()
         widget = self.widget("details-menu-view-resizeguest")
         widget.set_tooltip_text(tooltip)
-        widget.set_sensitive(not bool(tooltip))
-        if not tooltip:
-            self.widget("details-menu-view-resizeguest").set_active(bool(val))
+        self.widget("details-menu-view-resizeguest").set_active(bool(val))
 
         self._console.vmwindow_sync_resizeguest_with_display()
 

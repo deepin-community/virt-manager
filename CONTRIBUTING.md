@@ -34,8 +34,7 @@ it by running the latest code using the steps above.
 The following commands will be useful for anyone writing patches:
 
 ```sh
-pytest               # Run local unit test suite
-./setup.py pylint    # Run pylint/pycodestyle checking
+meson test -C build
 ```
 
 Any patches shouldn't change the output of 'pytest' or 'pylint'. Depending
@@ -43,8 +42,9 @@ on what version of libvirt or pylint is installed, you may see some
 pre-existing errors from these commands. The important thing is that
 any changes you make do not add additional errors.
 
-The 'pylint' command requires [`pylint`](https://github.com/PyCQA/pylint)
-and [`pycodestyle`](https://github.com/pycqa/pycodestyle) to be installed.
+The 'test' command requires [`pylint`](https://github.com/PyCQA/pylint),
+[`pycodestyle`](https://github.com/pycqa/pycodestyle) and
+['pytest'](https://github.com/pytest-dev/pytest/) to be installed.
 If [`codespell`](https://github.com/codespell-project/codespell) is installed,
 it will be invoked as well.
 
@@ -79,12 +79,7 @@ UI. See the files in the ui/ directory.
 ## Submitting patches
 
 The [virt-manager git repo](https://github.com/virt-manager/virt-manager)
-is hosted on github. Small patches are acceptable via github pull-request,
-but anything non-trivial should be sent to the
-[virt-tools-list mailing list](https://www.redhat.com/mailman/listinfo/virt-tools-list).
-
-Sending patches using `git send-email` is preferred, but `git format-patch`
-output attached to an email is also fine.
+is hosted on github. All patches should be submitted there.
 
 
 ## UI design
@@ -110,7 +105,10 @@ Translations are handled through the Weblate instance hosted by the Fedora Proje
 
 * https://translate.fedoraproject.org/projects/virt-manager/virt-manager/
 * More info about translating as part of Fedora: https://fedoraproject.org/wiki/L10N/Translate_on_Weblate
-* The up to date translation `.pot` template is stored in the [`translations` branch](https://github.com/virt-manager/virt-manager/tree/translations) and synced with the `main` branch before release.
+* The up to date translation `.pot` template is stored in the `main` branch
+* Translations are submitted by Weblate as pull requests, usually merged to the
+  `main` branch before release and whenever needed (e.g. before updating the
+  `.pot` template)
 
 
 ## Advanced testing

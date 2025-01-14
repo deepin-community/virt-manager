@@ -13,6 +13,7 @@ from . import generatename
 from . import progress
 from .logger import log
 from .xmlbuilder import XMLBuilder, XMLChildProperty, XMLProperty
+from . import xmlutil
 
 
 _DEFAULT_DEV_TARGET = "/dev"
@@ -82,7 +83,6 @@ class StoragePool(_StorageObject):
     TYPE_MPATH   = "mpath"
     TYPE_GLUSTER = "gluster"
     TYPE_RBD     = "rbd"
-    TYPE_SHEEPDOG = "sheepdog"
     TYPE_ZFS     = "zfs"
 
     @staticmethod
@@ -311,7 +311,7 @@ class StoragePool(_StorageObject):
 
     def supports_source_name(self):
         return self.type in [self.TYPE_LOGICAL, self.TYPE_GLUSTER,
-            self.TYPE_RBD, self.TYPE_SHEEPDOG, self.TYPE_ZFS]
+            self.TYPE_RBD, self.TYPE_ZFS]
 
 
     def supports_source_path(self):
@@ -323,7 +323,7 @@ class StoragePool(_StorageObject):
     def supports_hosts(self):
         return self.type in [
                 self.TYPE_NETFS, self.TYPE_ISCSI, self.TYPE_GLUSTER,
-                self.TYPE_RBD, self.TYPE_SHEEPDOG]
+                self.TYPE_RBD]
 
     def supports_format(self):
         return self.type in [self.TYPE_FS, self.TYPE_NETFS, self.TYPE_DISK]
@@ -340,8 +340,7 @@ class StoragePool(_StorageObject):
             return StorageVolume.TYPE_BLOCK
         if (self.type == StoragePool.TYPE_GLUSTER or
             self.type == StoragePool.TYPE_RBD or
-            self.type == StoragePool.TYPE_ISCSI or
-            self.type == StoragePool.TYPE_SHEEPDOG):
+            self.type == StoragePool.TYPE_ISCSI):
             return StorageVolume.TYPE_NETWORK
         return StorageVolume.TYPE_FILE
 
@@ -377,6 +376,10 @@ class StoragePool(_StorageObject):
         xml = self.get_xml()
         log.debug("Creating storage pool '%s' with xml:\n%s",
                       self.name, xml)
+
+        if (xmlutil.in_testsuite() and
+            "virtinst-testsuite-fail-pool-install" in xml):
+            raise RuntimeError("StoragePool.install testsuite mocked failure")
 
         meter = progress.ensure_meter(meter)
 
@@ -530,6 +533,7 @@ class StorageVolume(_StorageObject):
         self.format = parsevol.format
         self.capacity = parsevol.capacity
         self.allocation = parsevol.allocation
+        self.permissions.mode = parsevol.permissions.mode
         if not self._pool:
             self.pool = self._input_vol.storagePoolLookupByVolume()
 
@@ -671,8 +675,11 @@ class StorageVolume(_StorageObject):
                 cloneflags |= libvirt.VIR_STORAGE_VOL_CREATE_PREALLOC_METADATA
 
         if self.reflink:
-            cloneflags |= getattr(libvirt,
-                "VIR_STORAGE_VOL_CREATE_REFLINK", 1)
+            if self.format != "raw":
+                log.warning("skipping reflink for non-raw vol=%s", self.name)
+            else:
+                cloneflags |= getattr(libvirt,
+                    "VIR_STORAGE_VOL_CREATE_REFLINK", 1)
 
         event = threading.Event()
         meter = progress.ensure_meter(meter)
@@ -697,6 +704,7 @@ class StorageVolume(_StorageObject):
                 log.debug("Using vol create flags=%s", createflags)
                 vol = self.pool.createXML(xml, createflags)
 
+            meter.update(self.capacity)
             meter.end()
             log.debug("Storage volume '%s' install complete.", self.name)
             return vol

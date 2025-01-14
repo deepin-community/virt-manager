@@ -12,7 +12,11 @@ from . import lib
 ###################
 
 def _open_newvm(app):
-    app.root.find("New", "push button").click()
+    button = app.root.find("New", "push button")
+    # Launching the dialog can be very flakey without this explicit
+    # point() call, not sure why
+    button.point()
+    button.click()
     return app.find_window("New VM")
 
 
@@ -476,10 +480,16 @@ def testNewKVMQ35Tweaks(app):
     details.combo_check_default("Chipset:", "Q35")
     details.combo_check_default("Firmware:", "BIOS")
 
-    # Switch i440FX and back
+    # Unchanged machine
+    details.combo_select("Chipset:", "i440FX")
+    details.combo_select("Chipset:", "Q35")
+    appl.click()
+    lib.utils.check(lambda: not appl.sensitive)
+    # Switch i440FX
     details.combo_select("Chipset:", "i440FX")
     appl.click()
     lib.utils.check(lambda: not appl.sensitive)
+    # Switch back to Q35
     details.combo_select("Chipset:", "Q35")
     appl.click()
     lib.utils.check(lambda: not appl.sensitive)
@@ -654,7 +664,7 @@ def testNewVMArmKernel(app):
     newvm.find_fuzzy("Virt Type", "combo").click()
     KVM = newvm.find_fuzzy("KVM", "menu item")
     TCG = newvm.find_fuzzy("TCG", "menu item")
-    lib.utils.check(lambda: KVM.focused)
+    lib.utils.check(lambda: KVM.selected)
     lib.utils.check(lambda: TCG.showing)
     app.rawinput.pressKey("Esc")
 

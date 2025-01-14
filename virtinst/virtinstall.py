@@ -67,7 +67,7 @@ def check_cdrom_option_error(options):
 def convert_old_printxml(options):
     if options.xmlstep:
         options.xmlonly = options.xmlstep
-        del(options.xmlstep)
+        del options.xmlstep
 
 
 def convert_old_sound(options):
@@ -135,10 +135,10 @@ def convert_old_disks(options):
         else:
             _do_convert_old_disks(options)
 
-    del(options.file_paths)
-    del(options.disksize)
-    del(options.sparse)
-    del(options.nodisks)
+    del options.file_paths
+    del options.disksize
+    del options.sparse
+    del options.nodisks
     log.debug("Distilled --disk options: %s", options.disk)
 
 
@@ -147,7 +147,7 @@ def convert_old_os_options(options):
         return
     log.warning(
         _("--os-type is deprecated and does nothing. Please stop using it."))
-    del(options.old_os_type)
+    del options.old_os_type
 
 
 def convert_old_memory(options):
@@ -204,9 +204,9 @@ def convert_old_networks(options):
                 networks[idx] = networks[idx].replace(prefix + ":",
                                                       prefix + "=")
 
-    del(options.mac)
-    del(options.bridge)
-    del(options.nonetworks)
+    del options.mac
+    del options.bridge
+    del options.nonetworks
 
     options.network = networks
     log.debug("Distilled --network options: %s", options.network)
@@ -224,7 +224,7 @@ def convert_old_graphics(options):
     if graphics and (vnc or sdl or keymap or vncport or vnclisten):
         fail(_("Cannot mix --graphics and old style graphical options"))
 
-    optnum = sum([bool(g) for g in [vnc, nographics, sdl, graphics]])
+    optnum = sum(bool(g) for g in [vnc, nographics, sdl, graphics])
     if optnum > 1:
         raise ValueError(_("Can't specify more than one of VNC, SDL, "
                            "--graphics or --nographics"))
@@ -411,6 +411,9 @@ def build_installer(options, guest, installdata):
         else:
             extra_args = [installdata.kernel_args]
 
+    if options.unattended and options.cloud_init:
+        cli.fail_conflicting("--unattended", "--cloud-init")
+
     if options.unattended:
         unattended_data = cli.parse_unattended(options.unattended)
 
@@ -429,11 +432,11 @@ def build_installer(options, guest, installdata):
         install_bootdev = "network"
     elif installdata.is_set:
         pass
-    elif (options.import_install or
-          options.xmlonly or
-          options.boot or
-          options.cloud_init or
-          options.unattended):
+    elif options.xmlonly:
+        no_install = True
+    elif options.import_install:
+        no_install = True
+    elif options.boot_was_set:
         no_install = True
 
     installer = virtinst.Installer(guest.conn,
@@ -544,15 +547,26 @@ def installer_detect_distro(guest, installer, osdata):
         # OS name has to be set firstly whenever --osinfo is passed,
         # otherwise it won't be respected when the installer creates the
         # Distro Store.
+        fallback_name = None
         if osdata.get_name():
+            fallback_name = osdata.get_name()
             os_set = True
-            guest.set_os_name(osdata.get_name())
+            guest.set_os_name(fallback_name)
 
         # This also validates the install location
         autodistro = installer.detect_distro(guest)
-        if osdata.is_detect() and autodistro:
-            os_set = True
-            guest.set_os_name(autodistro)
+        if osdata.is_detect():
+            if autodistro:
+                os_set = True
+                guest.set_os_name(autodistro)
+            elif fallback_name:
+                msg = _(
+                    "Failed to detect osinfo OS name from install media, "
+                    "using fallback name '{name}'.\n"
+                    "Please file a bug against virt-install if "
+                    "you expected the detection to succeed.").format(
+                        name=fallback_name)
+                log.warning(msg)
     except ValueError as e:
         fail(_("Error validating install location: %s") % str(e))
 
@@ -563,8 +577,6 @@ def installer_detect_distro(guest, installer, osdata):
         return
     if osdata.is_require_on():
         fail(msg)
-    if not osdata.is_require_default():
-        return
 
     if not _needs_accurate_osinfo(guest):
         return
@@ -624,10 +636,8 @@ def _build_options_guest(conn, options):
     # We do these two parser bit early, since Installer setup will
     # depend on them, but delay the rest to later, since things like
     # disk naming can depend on Installer operations
-    cli.run_parser(options, guest, cli.ParserBoot)
-    options.boot = None
-    cli.run_parser(options, guest, cli.ParserMetadata)
-    options.metadata = None
+    cli.run_parser(guest, cli.ParserBoot, options.boot)
+    cli.run_parser(guest, cli.ParserMetadata, options.metadata)
 
     # Call set_capabilities_defaults explicitly here rather than depend
     # on set_defaults calling it. Installer setup needs filled in values.
@@ -641,6 +651,7 @@ def _build_options_guest(conn, options):
 def build_guest_instance(conn, options):
     installdata = cli.parse_install(options.install)
     osdata = cli.parse_os_variant(options.os_variant or installdata.os)
+    options.boot_was_set = bool(options.boot)
 
     if options.reinstall:
         dummy1, guest, dummy2 = cli.get_domain_and_guest(conn, options.reinstall)
@@ -658,7 +669,6 @@ def build_guest_instance(conn, options):
         # default disk paths are generated based on VM name
         set_cli_default_name(guest)
         cli.run_all_parsers(options, guest)
-        cli.parse_xmlcli(guest, options)
         set_cli_defaults(options, guest)
 
     installer.set_install_defaults(guest)
@@ -738,7 +748,7 @@ class WaitHandler:
 
     def wait(self):
         """
-        sleep 1 second, then teturn True if wait time has expired
+        sleep 1 second, then return True if wait time has expired
         """
         _sleep(1)
         if self._wait_forever:
@@ -835,11 +845,13 @@ class _InstalledDomain:
 
             return not self._domain.isActive()
         except libvirt.libvirtError as e:
-            if (self._transient and
-                e.get_error_code() == libvirt.VIR_ERR_NO_DOMAIN):
+            if e.get_error_code() != libvirt.VIR_ERR_NO_DOMAIN:
+                raise  # pragma: no cover
+
+            if self._transient:
                 log.debug("transient VM shutdown and disappeared.")
                 return True
-            raise  # pragma: no cover
+            fail(_("VM disappeared unexpectedly: %s") % e)  # pragma: no cover
 
 
 def _wait_for_domain(installer, instdomain, autoconsole, waithandler):
@@ -867,7 +879,7 @@ def _wait_for_domain(installer, instdomain, autoconsole, waithandler):
         # User either:
         #   used --noautoconsole
         #   killed console and guest is still running
-        if not installer.has_install_phase():
+        if not installer.requires_postboot_xml_changes():
             return
 
         msg += "\n"
@@ -918,7 +930,7 @@ def _process_domain(domain, guest, installer, waithandler, autoconsole,
     if domain.isActive():
         return
 
-    if noreboot or not installer.has_install_phase():
+    if noreboot or not installer.requires_postboot_xml_changes():
         print_stdout(  # pragma: no cover
             _("You can restart your domain by running:\n  %s") %
             cli.virsh_start_cmd(guest))
@@ -1014,7 +1026,7 @@ def xml_to_print(guest, installer, xmlonly, dry):
 
 def parse_args():
     parser = cli.setupParser(
-        "%(prog)s --name NAME --memory MB STORAGE INSTALL [options]",
+        "%(prog)s OPTIONS",
         _("Create a new virtual machine from specified install media."),
         introspection_epilog=True)
     cli.add_connect_option(parser)

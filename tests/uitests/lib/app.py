@@ -215,14 +215,16 @@ class VMMDogtailApp(object):
         self.root.find_fuzzy("Edit", "menu").click()
         self.root.find_fuzzy("Connection Details", "menu item").click()
         win = self.find_window("%s - Connection Details" % conn_label)
-        win.find_fuzzy(tab, "page tab").click()
+        tab = win.find_fuzzy(tab, "page tab")
+        tab.point()
+        tab.click()
         return win
 
     def manager_test_conn_window_cleanup(self, conn_label, childwin):
         # Give time for the child window to appear and possibly grab focus
         self.sleep(1)
         self.get_manager(check_active=False)
-        dogtail.rawinput.drag(childwin.title_coordinates(), (1000, 1000))
+        dogtail.rawinput.dragWithTrajectory(childwin.title_coordinates(), (1000, 1000))
         self.manager_conn_disconnect(conn_label)
         utils.check(lambda: not childwin.showing)
 
@@ -294,13 +296,13 @@ class VMMDogtailApp(object):
     def open(self, uri=None,
             extra_opts=None, check_already_running=True, use_uri=True,
             window_name=None, xmleditor_enabled=False, keyfile=None,
-            break_setfacl=False, first_run=True, no_fork=True,
+            break_setfacl=False, first_run=True,
             will_fail=False, enable_libguestfs=False,
-            firstrun_uri=None, show_console=None):
+            firstrun_uri=None, show_console=None, allow_debug=True):
         extra_opts = extra_opts or []
         uri = uri or self.uri
 
-        if tests.utils.TESTCONFIG.debug and no_fork:
+        if allow_debug and tests.utils.TESTCONFIG.debug:
             stdout = sys.stdout
             stderr = sys.stderr
             extra_opts.append("--debug")
@@ -310,8 +312,6 @@ class VMMDogtailApp(object):
 
         cmd = [sys.executable]
         cmd += [os.path.join(tests.utils.TOPDIR, "virt-manager")]
-        if no_fork:
-            cmd += ["--no-fork"]
         if use_uri:
             cmd += ["--connect", uri]
         if show_console:
@@ -345,6 +345,11 @@ class VMMDogtailApp(object):
         if check_already_running:
             self.error_if_already_running()
         self._proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr)
-        if not will_fail:
+        if will_fail:
+            return
+
+        with utils.dogtail_timeout(10):
+            # On Fedora 39 sometimes app launch from the test suite
+            # takes a while for reasons I can't quite figure
             self._root = dogtail.tree.root.application("virt-manager")
             self._topwin = self.find_window(window_name)

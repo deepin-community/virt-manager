@@ -270,8 +270,7 @@ class vmmAddHardware(vmmGObjectUI):
                       True, None)
         add_hw_option(_("RNG"), "system-run", PAGE_RNG, True, None)
         add_hw_option(_("Panic Notifier"), "system-run", PAGE_PANIC,
-            bool(DevicePanic.get_models(self.vm.get_xmlobj())),
-            _("Not supported for this hypervisor/libvirt/arch combination."))
+                      True, None)
         add_hw_option(_("VirtIO VSOCK"), "network-idle", PAGE_VSOCK,
             self.vm.is_hvm(),
             _("Not supported for this hypervisor/libvirt/arch combination."))
@@ -371,8 +370,8 @@ class vmmAddHardware(vmmGObjectUI):
 
         msg = _("These changes will take effect after "
                 "the next guest shutdown.")
-        dtype = (hotplug_err and
-                 Gtk.MessageType.WARNING or Gtk.MessageType.INFO)
+        dtype = (Gtk.MessageType.WARNING if hotplug_err else
+                 Gtk.MessageType.INFO)
         hotplug_msg = ""
         if hotplug_err:
             hotplug_msg += (hotplug_err[0] + "\n\n" +
@@ -511,16 +510,6 @@ class vmmAddHardware(vmmGObjectUI):
             "xen": _("Xen"),
         }
         return bus_mappings.get(bus, bus)
-
-    @staticmethod
-    def panic_pretty_model(val):
-        labels = {
-            DevicePanic.MODEL_ISA: _("ISA"),
-            DevicePanic.MODEL_PSERIES: _("pSeries"),
-            DevicePanic.MODEL_HYPERV: _("Hyper-V"),
-            DevicePanic.MODEL_S390: _("s390"),
-        }
-        return labels.get(val, val)
 
     @staticmethod
     def rng_pretty_type(val):
@@ -871,12 +860,8 @@ class vmmAddHardware(vmmGObjectUI):
 
 
     def _build_panic_model_combo(self):
-        values = []
-        for m in DevicePanic.get_models(self.vm.get_xmlobj()):
-            values.append([m, vmmAddHardware.panic_pretty_model(m)])
-
-        default = DevicePanic.get_default_model(self.vm.get_xmlobj())
-        uiutil.build_simple_combo(self.widget("panic-model"), values, default_value=default)
+        values = [[None, _("Hypervisor default")]]
+        uiutil.build_simple_combo(self.widget("panic-model"), values)
 
 
     def _build_controller_type_combo(self):
@@ -1486,6 +1471,9 @@ class vmmAddHardware(vmmGObjectUI):
             source_channel = None
         if not self.widget("char-target-name").get_visible():
             target_name = None
+        if not self.widget("char-vdagent-clipboard").get_visible():
+            clipboard = None
+
         if not typebox.get_visible():
             target_type = None
 
@@ -1560,7 +1548,7 @@ class vmmAddHardware(vmmGObjectUI):
         controller_num = [x for x in controllers if
                 (x.type == controller_type)]
         if len(controller_num) > 0:
-            index_new = max([x.index for x in controller_num]) + 1
+            index_new = max(int(x.index or 0) for x in controller_num) + 1
             dev.index = index_new
 
         dev.type = controller_type
@@ -1590,8 +1578,8 @@ class vmmAddHardware(vmmGObjectUI):
                 textent.set_text(path)
 
         reason = (isdir and
-                  self.config.CONFIG_DIR_FS or
-                  self.config.CONFIG_DIR_IMAGE)
+                  vmmStorageBrowser.REASON_FS or
+                  vmmStorageBrowser.REASON_IMAGE)
         if self._storagebrowser is None:
             self._storagebrowser = vmmStorageBrowser(self.conn)
 

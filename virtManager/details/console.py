@@ -20,13 +20,13 @@ from ..lib.keyring import vmmKeyring
 # console-pages IDs
 (_CONSOLE_PAGE_UNAVAILABLE,
  _CONSOLE_PAGE_SERIAL,
- _CONSOLE_PAGE_GRAPHICS) = range(3)
+ _CONSOLE_PAGE_GRAPHICS,
+ _CONSOLE_PAGE_CONNECT) = range(4)
 
 # console-gfx-pages IDs
 (_GFX_PAGE_VIEWER,
  _GFX_PAGE_AUTH,
- _GFX_PAGE_UNAVAILABLE,
- _GFX_PAGE_CONNECT) = range(4)
+ _GFX_PAGE_UNAVAILABLE) = range(3)
 
 
 class _TimedRevealer(vmmGObject):
@@ -188,22 +188,37 @@ class vmmOverlayToolbar:
         self.timed_revealer = None
 
 
-class _ConsoleMenu:
+def _cant_embed_graphics(ginfo):
+    if ginfo.gtype in ["vnc", "spice"]:
+        return
+
+    msg = _("Cannot display graphical console type '%s'") % ginfo.gtype
+    return msg
+
+
+class _ConsoleMenu(vmmGObject):
     """
     Helper class for building the text/graphical console menu list
     """
+    def __init__(self, show_cb, toggled_cb):
+        vmmGObject.__init__(self)
+        self._menu = Gtk.Menu()
+        self._menu.connect("show", show_cb)
+        self._toggled_cb = toggled_cb
+
+    def _cleanup(self):
+        self._menu.destroy()
+        self._menu = None
+        self._toggled_cb = None
+
 
     ################
     # Internal API #
     ################
 
     def _build_serial_menu_items(self, vm):
-        devs = vmmSerialConsole.get_serialcon_devices(vm)
-        if len(devs) == 0:
-            return [[_("No text console available"), None, None]]
-
         ret = []
-        for dev in devs:
+        for dev in vmmSerialConsole.get_serialcon_devices(vm):
             if dev.DEVICE_TYPE == "console":
                 label = _("Text Console %d") % (dev.get_xml_idx() + 1)
             else:
@@ -211,40 +226,58 @@ class _ConsoleMenu:
 
             tooltip = vmmSerialConsole.can_connect(vm, dev)
             ret.append([label, dev, tooltip])
+
+        if not ret:
+            ret = [[_("No text console available"), None, None]]
         return ret
 
     def _build_graphical_menu_items(self, vm):
-        devs = vm.xmlobj.devices.graphics
-        if len(devs) == 0:
-            return [[_("No graphical console available"), None, None]]
 
         from ..device.gfxdetails import vmmGraphicsDetails
 
         ret = []
-        for idx, dev in enumerate(devs):
-            label = (_("Graphical Console") + " " +
-                     vmmGraphicsDetails.graphics_pretty_type_simple(dev.type))
+        found_default = False
+        for gdev in vm.xmlobj.devices.graphics:
+            idx = gdev.get_xml_idx()
+            ginfo = ConnectionInfo(vm.conn, gdev)
 
-            tooltip = None
+            label = (_("Graphical Console") + " " +
+                     vmmGraphicsDetails.graphics_pretty_type_simple(gdev.type))
             if idx > 0:
                 label += " %s" % (idx + 1)
-                tooltip = _("virt-manager does not support more "
-                            "than one graphical console")
 
-            ret.append([label, dev, tooltip])
+            tooltip = _cant_embed_graphics(ginfo)
+            if not tooltip:
+                if not found_default:
+                    found_default = True
+                else:
+                    tooltip = _("virt-manager does not support more "
+                                "than one graphical console")
+
+            ret.append([label, ginfo, tooltip])
+
+        if not ret:
+            ret = [[_("Graphical console not configured for guest"),
+                    None, None]]
         return ret
+
+    def _get_selected_menu_item(self):
+        for child in self._menu.get_children():
+            if hasattr(child, 'get_active') and child.get_active():
+                return child
 
 
     ##############
     # Public API #
     ##############
 
-    def rebuild_menu(self, vm, submenu, toggled_cb):
-        oldlabel = None
-        for child in submenu.get_children():
-            if hasattr(child, 'get_active') and child.get_active():
-                oldlabel = child.get_label()
-            submenu.remove(child)
+    def rebuild_menu(self, vm):
+        olditem = self._get_selected_menu_item()
+        oldlabel = olditem and olditem.get_label() or None
+
+        # Clear menu
+        for child in self._menu.get_children():
+            self._menu.remove(child)
 
         graphics = self._build_graphical_menu_items(vm)
         serials = self._build_serial_menu_items(vm)
@@ -255,12 +288,12 @@ class _ConsoleMenu:
         last_item = None
         for (label, dev, tooltip) in items:
             if label is None:
-                submenu.add(Gtk.SeparatorMenuItem())
+                self._menu.add(Gtk.SeparatorMenuItem())
                 continue
 
-            cb = toggled_cb
-            cbdata = dev
             sensitive = bool(dev and not tooltip)
+            if not sensitive and not tooltip:
+                tooltip = label
 
             active = False
             if oldlabel is None and sensitive:
@@ -277,21 +310,30 @@ class _ConsoleMenu:
 
             item.set_label(label)
             item.set_active(active and sensitive)
-            if cbdata and sensitive:
-                item.connect("toggled", cb, cbdata)
-
             item.set_sensitive(sensitive)
             item.set_tooltip_text(tooltip or None)
-            submenu.add(item)
+            item.vmm_data = dev
+            if sensitive:
+                item.connect("toggled", self._toggled_cb)
+            self._menu.add(item)
 
-        submenu.show_all()
+        self._menu.show_all()
 
-    def activate_default(self, menu):
-        for child in menu.get_children():
+    def activate_default(self):
+        for child in self._menu.get_children():
             if child.get_sensitive() and hasattr(child, "toggled"):
                 child.toggled()
                 return True
         return False
+
+    def get_selected(self):
+        row = self._get_selected_menu_item()
+        if not row:
+            row = self._menu.get_children()[0]
+        return row.get_label(), row.vmm_data, row.get_tooltip_text()
+
+    def get_menu(self):
+        return self._menu
 
 
 class vmmConsolePages(vmmGObjectUI):
@@ -324,9 +366,6 @@ class vmmConsolePages(vmmGObjectUI):
 
         # Fullscreen toolbar
         self._keycombo_menu = build_keycombo_menu(self._do_send_key)
-        self._console_list_menu = Gtk.Menu()
-        self._console_list_menu.connect("show",
-                self._populate_console_list_menu)
 
         self._overlay_toolbar_fullscreen = vmmOverlayToolbar(
             on_leave_fn=self._leave_fullscreen,
@@ -346,7 +385,9 @@ class vmmConsolePages(vmmGObjectUI):
         self.widget("serial-pages").set_show_tabs(False)
         self.widget("console-gfx-pages").set_show_tabs(False)
 
-        self._consolemenu = _ConsoleMenu()
+        self._consolemenu = _ConsoleMenu(
+                self._on_console_menu_show_cb,
+                self._on_console_menu_toggled_cb)
         self._serial_consoles = []
 
         # Signals are added by vmmVMWindow. Don't use connect_signals here
@@ -359,8 +400,6 @@ class vmmConsolePages(vmmGObjectUI):
             "on_console_connect_button_clicked": self._connect_button_clicked_cb,
         })
 
-        self.widget("console-gfx-scroll").connect("size-allocate",
-            self._scroll_size_allocate)
         self.widget("console-gfx-pages").connect("switch-page",
                 self._page_changed_cb)
 
@@ -377,6 +416,9 @@ class vmmConsolePages(vmmGObjectUI):
         for serial in self._serial_consoles:
             serial.cleanup()
         self._serial_consoles = []
+
+        self._consolemenu.cleanup()
+        self._consolemenu = None
 
 
     #################
@@ -424,71 +466,6 @@ class vmmConsolePages(vmmGObjectUI):
     # Resize and scaling APIs #
     ###########################
 
-    def _scroll_size_allocate(self, src_ignore, req):
-        if not self._viewer:
-            return
-
-        res = self._viewer.console_get_desktop_resolution()
-        if res is None:
-            if not self.config.CLITestOptions.fake_console_resolution:
-                return
-            res = (800, 600)
-
-        scroll = self.widget("console-gfx-scroll")
-        is_scale = self._viewer.console_get_scaling()
-        is_resizeguest = self._viewer.console_get_resizeguest()
-
-        dx = 0
-        dy = 0
-        align_ratio = float(req.width) / float(req.height)
-
-        # pylint: disable=unpacking-non-sequence
-        desktop_w, desktop_h = res
-        desktop_ratio = float(desktop_w) / float(desktop_h)
-
-        if is_scale:
-            # Make sure we never show scrollbars when scaling
-            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
-        else:
-            scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
-                              Gtk.PolicyType.AUTOMATIC)
-
-        if is_resizeguest:
-            # With resize guest, we don't want to maintain aspect ratio,
-            # since the guest can resize to arbitrary resolutions.
-            viewer_alloc = Gdk.Rectangle()
-            viewer_alloc.width = req.width
-            viewer_alloc.height = req.height
-            self._viewer.console_size_allocate(viewer_alloc)
-            return
-
-        if not is_scale:
-            # Scaling disabled is easy, just force the VNC widget size. Since
-            # we are inside a scrollwindow, it shouldn't cause issues.
-            self._viewer.console_set_size_request(desktop_w, desktop_h)
-            return
-
-        # Make sure there is no hard size requirement so we can scale down
-        self._viewer.console_set_size_request(-1, -1)
-
-        # Make sure desktop aspect ratio is maintained
-        if align_ratio > desktop_ratio:
-            desktop_w = int(req.height * desktop_ratio)
-            desktop_h = req.height
-            dx = (req.width - desktop_w) // 2
-
-        else:
-            desktop_w = req.width
-            desktop_h = int(req.width // desktop_ratio)
-            dy = (req.height - desktop_h) // 2
-
-        viewer_alloc = Gdk.Rectangle()
-        viewer_alloc.x = dx
-        viewer_alloc.y = dy
-        viewer_alloc.width = desktop_w
-        viewer_alloc.height = desktop_h
-        self._viewer.console_size_allocate(viewer_alloc)
-
     def _viewer_get_resizeguest_tooltip(self):
         tooltip = ""
         if self._viewer:
@@ -501,23 +478,26 @@ class vmmConsolePages(vmmGObjectUI):
 
         val = bool(self.vm.get_console_resizeguest())
         self._viewer.console_set_resizeguest(val)
-        self.widget("console-gfx-scroll").queue_resize()
 
     def _set_size_to_vm(self):
-        # Resize the console to best fit the VM resolution
-        if not self._viewer:
+        if not self._viewer_is_visible():
             return  # pragma: no cover
-        if not self._viewer.console_get_desktop_resolution():
-            return  # pragma: no cover
+
+        w, h = self._viewer.console_get_preferred_size()
+        if w <= 0 or h <= 0:  # pragma: no cover
+            log.debug("_set_size_to_vm but no valid sizing found")
+            return
 
         top_w, top_h = self.topwin.get_size()
         viewer_alloc = self.widget("console-gfx-scroll").get_allocation()
-        desktop_w, desktop_h = self._viewer.console_get_desktop_resolution()
 
+        valw = w + (top_w - viewer_alloc.width)
+        valh = h + (top_h - viewer_alloc.height)
+
+        log.debug("_set_size_to_vm vm=(%s, %s) window=(%s, %s)",
+                  w, h, valw, valh)
         self.topwin.unmaximize()
-        self.topwin.resize(
-            desktop_w + (top_w - viewer_alloc.width),
-            desktop_h + (top_h - viewer_alloc.height))
+        self.topwin.resize(valw, valh)
 
 
     ################
@@ -528,22 +508,14 @@ class vmmConsolePages(vmmGObjectUI):
         if not self._viewer:
             return
 
-        fs = self._in_fullscreen
-        curscale = self._viewer.console_get_scaling()
         scale_type = self.vm.get_console_scaling()
 
-        if (scale_type == self.config.CONSOLE_SCALE_NEVER and
-            curscale is True):
+        if scale_type == self.config.CONSOLE_SCALE_NEVER:
             self._viewer.console_set_scaling(False)
-        elif (scale_type == self.config.CONSOLE_SCALE_ALWAYS and
-              curscale is False):
+        elif scale_type == self.config.CONSOLE_SCALE_ALWAYS:
             self._viewer.console_set_scaling(True)
-        elif (scale_type == self.config.CONSOLE_SCALE_FULLSCREEN and
-              curscale != fs):
-            self._viewer.console_set_scaling(fs)
-
-        # Refresh viewer size
-        self.widget("console-gfx-scroll").queue_resize()
+        elif scale_type == self.config.CONSOLE_SCALE_FULLSCREEN:
+            self._viewer.console_set_scaling(self._in_fullscreen)
 
 
     ###################
@@ -653,8 +625,8 @@ class vmmConsolePages(vmmGObjectUI):
         if self._viewer:
             self._viewer.console_grab_focus()
 
-    def _activate_gfx_connect_page(self):
-        self.widget("console-gfx-pages").set_current_page(_GFX_PAGE_CONNECT)
+    def _activate_console_connect_page(self):
+        self.widget("console-pages").set_current_page(_CONSOLE_PAGE_CONNECT)
 
     def _viewer_is_visible(self):
         is_visible = self.widget("console-pages").is_visible()
@@ -669,50 +641,25 @@ class vmmConsolePages(vmmGObjectUI):
 
     def _viewer_can_usb_redirect(self):
         return (self._viewer_is_visible() and
-                self._viewer.console_has_usb_redirection() and
-                self.vm.has_spicevmc_type_redirdev())
+                self._viewer.console_has_usb_redirection())
 
 
     #########################
     # Viewer login attempts #
     #########################
 
-    def _init_viewer(self):
+    def _init_viewer(self, ginfo, errmsg):
         if self._viewer or not self.is_visible():
-            # Don't try and login for these cases
             return
 
-        ginfo = None
-        try:
-            gdevs = self.vm.xmlobj.devices.graphics
-            gdev = gdevs and gdevs[0] or None
-            if gdev:
-                ginfo = ConnectionInfo(self.vm.conn, gdev)
-        except Exception as e:  # pragma: no cover
-            # We can fail here if VM is destroyed: xen is a bit racy
-            # and can't handle domain lookups that soon after
-            log.exception("Getting graphics console failed: %s", str(e))
-            return
-
-        if ginfo is None:
-            log.debug("No graphics configured for guest")
-            self._activate_gfx_unavailable_page(
-                _("Graphical console not configured for guest"))
-            return
-
-        if ginfo.gtype not in self.config.embeddable_graphics():
-            log.debug("Don't know how to show graphics type '%s' "
-                          "disabling console page", ginfo.gtype)
-
-            msg = (_("Cannot display graphical console type '%s'")
-                     % ginfo.gtype)
-
-            self._activate_gfx_unavailable_page(msg)
+        if errmsg:
+            log.debug("No acceptable graphics to connect to")
+            self._activate_gfx_unavailable_page(errmsg)
             return
 
         if (not self.vm.get_console_autoconnect() and
             not self._viewer_connect_clicked):
-            self._activate_gfx_connect_page()
+            self._activate_console_connect_page()
             return
 
         self._activate_gfx_unavailable_page(
@@ -723,6 +670,9 @@ class vmmConsolePages(vmmGObjectUI):
             if ginfo.gtype == "vnc":
                 viewer_class = VNCViewer
             elif ginfo.gtype == "spice":
+                # We do this here and not in the embed check, since user
+                # is probably expecting their spice console to work, so we
+                # should show an explicit failure
                 if SPICE_GTK_IMPORT_ERROR:
                     raise RuntimeError(
                             "Error opening SPICE console: %s" %
@@ -772,9 +722,6 @@ class vmmConsolePages(vmmGObjectUI):
     def _pointer_ungrabbed_cb(self, _src):
         self._pointer_is_grabbed = False
         self.emit("change-title")
-
-    def _viewer_allocate_cb(self, src, ignore):
-        self.widget("console-gfx-scroll").queue_resize()
 
     def _viewer_keyboard_grab_cb(self, src):
         self._viewer_sync_modifiers()
@@ -863,7 +810,6 @@ class vmmConsolePages(vmmGObjectUI):
         self._viewer.connect("add-display-widget", self._viewer_add_display_cb)
         self._viewer.connect("pointer-grab", self._pointer_grabbed_cb)
         self._viewer.connect("pointer-ungrab", self._pointer_ungrabbed_cb)
-        self._viewer.connect("size-allocate", self._viewer_allocate_cb)
         self._viewer.connect("keyboard-grab", self._viewer_keyboard_grab_cb)
         self._viewer.connect("keyboard-ungrab", self._viewer_keyboard_grab_cb)
         self._viewer.connect("connected", self._viewer_connected_cb)
@@ -880,16 +826,22 @@ class vmmConsolePages(vmmGObjectUI):
     # Console list menu handling #
     ##############################
 
-    def _console_list_menu_toggled(self, src, dev):
-        if not dev or dev.DEVICE_TYPE == "graphics":
+    def _console_menu_view_selected(self):
+        name, dev, errmsg = self._consolemenu.get_selected()
+        is_graphics = hasattr(dev, "gtype")
+
+        if self.vm.is_runable():
+            self._show_vm_status_unavailable()
+            return
+
+        if errmsg or not dev or is_graphics:
             self.widget("console-pages").set_current_page(
                     _CONSOLE_PAGE_GRAPHICS)
-            self.idle_add(self._init_viewer)
+            self.idle_add(self._init_viewer, dev, errmsg)
             return
 
         target_port = dev.get_xml_idx()
         serial = None
-        name = src.get_label()
         for s in self._serial_consoles:
             if s.name == name:
                 serial = s
@@ -904,25 +856,28 @@ class vmmConsolePages(vmmGObjectUI):
             self.widget("serial-pages").append_page(serial.get_box(), title)
             self._serial_consoles.append(serial)
 
+        if (not self.vm.get_console_autoconnect() and
+            not self._viewer_connect_clicked):
+            self._activate_console_connect_page()
+            return
+
         serial.open_console()
         page_idx = self._serial_consoles.index(serial)
         self.widget("console-pages").set_current_page(_CONSOLE_PAGE_SERIAL)
         self.widget("serial-pages").set_current_page(page_idx)
 
-    def _populate_console_list_menu(self, ignore=None):
-        self._consolemenu.rebuild_menu(
-                self.vm, self._console_list_menu,
-                self._console_list_menu_toggled)
+    def _populate_console_menu(self):
+        self._consolemenu.rebuild_menu(self.vm)
 
     def _toggle_first_console_menu_item(self):
         # We iterate through the 'console' menu and activate the first
         # valid entry... hacky but it works
-        self._populate_console_list_menu()
-        found = self._consolemenu.activate_default(self._console_list_menu)
+        self._populate_console_menu()
+        found = self._consolemenu.activate_default()
         if not found:
             # Calling this with dev=None will trigger _init_viewer
             # which shows some meaningful errors
-            self._console_list_menu_toggled(None, None)
+            self._console_menu_view_selected()
 
     def _activate_default_console_page(self):
         if self.vm.is_runable():
@@ -941,6 +896,12 @@ class vmmConsolePages(vmmGObjectUI):
         # just started, so connect to the default page
         self._toggle_first_console_menu_item()
 
+    def _on_console_menu_toggled_cb(self, src):
+        self._console_menu_view_selected()
+
+    def _on_console_menu_show_cb(self, src):
+        self._populate_console_menu()
+
 
     ################
     # UI listeners #
@@ -951,7 +912,7 @@ class vmmConsolePages(vmmGObjectUI):
 
     def _connect_button_clicked_cb(self, src):
         self._viewer_connect_clicked = True
-        self._init_viewer()
+        self._console_menu_view_selected()
 
     def _page_changed_cb(self, src, origpage, newpage):
         # Hide the contents of all other pages, so they don't screw
@@ -967,9 +928,8 @@ class vmmConsolePages(vmmGObjectUI):
     # API used by vmmVMWindow #
     ###########################
 
-    def vmwindow_viewer_has_usb_redirection(self):
-        return bool(self._viewer and
-            self._viewer.console_has_usb_redirection())
+    def vmwindow_viewer_can_usb_redirect(self):
+        return self._viewer_can_usb_redirect()
     def vmwindow_viewer_get_usb_widget(self):
         return self._viewer.console_get_usb_widget()
     def vmwindow_viewer_get_pixbuf(self):
@@ -996,11 +956,9 @@ class vmmConsolePages(vmmGObjectUI):
     def vmwindow_get_keycombo_menu(self):
         return self._keycombo_menu
     def vmwindow_get_console_list_menu(self):
-        return self._console_list_menu
+        return self._consolemenu.get_menu()
     def vmwindow_get_viewer_is_visible(self):
         return self._viewer_is_visible()
-    def vmwindow_get_can_usb_redirect(self):
-        return self._viewer_can_usb_redirect()
     def vmwindow_get_resizeguest_tooltip(self):
         return self._viewer_get_resizeguest_tooltip()
 

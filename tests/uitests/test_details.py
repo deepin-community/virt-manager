@@ -1,6 +1,8 @@
 # This work is licensed under the GNU GPLv2 or later.
 # See the COPYING file in the top-level directory.
 
+import unittest
+
 import tests.utils
 from . import lib
 
@@ -672,6 +674,7 @@ def testDetailsMiscEdits(app):
     Test misc editing behavior, like checking for unapplied
     changes
     """
+    app.open(extra_opts=["--test-options=test-update-device-fail"])
     win = app.manager_open_details("test-many-devices")
     hwlist = win.find("hw-list")
 
@@ -799,6 +802,20 @@ def testDetailsXMLEdit(app):
     lib.utils.test_xmleditor_interactions(app, win, finish)
 
 
+@unittest.mock.patch.dict('os.environ',
+        {"VIRTINST_TEST_SUITE_FAKE_NO_SOURCEVIEW": "1"})
+def testDetailsXMLEditorSourceviewFallback(app):
+    """
+    Test XML editor standard bits, when falling back to gtk textview
+    """
+    app.open(xmleditor_enabled=True)
+    win = app.manager_open_details("test-clone-simple")
+    finish = win.find("config-apply")
+
+    # Do standard xmleditor tests
+    lib.utils.test_xmleditor_interactions(app, win, finish)
+
+
 def testDetailsConsoleChecksSSH(app):
     """
     Trigger a bunch of console connection failures to hit
@@ -839,7 +856,7 @@ def testDetailsConsoleChecksSSH(app):
     # Check initial state
     _checkcon("Graphical console not configured")
     _stop()
-    _check_textconsole_menu("No graphical console available")
+    _check_textconsole_menu("Graphical console not configured")
 
     # Add a SDL graphics device which can't be displayed
     detailsbtn.click()
@@ -905,12 +922,7 @@ def testDetailsConsoleChecksSSH(app):
     _checkcon(".*SSH tunnel error output.*")
 
 
-def testDetailsConsoleChecksTCP(app):
-    """
-    Hit a specific warning when the connection has
-    non-SSH transport but the guest config is only listening locally
-    """
-    fakeuri = "qemu+tcp://foouser@256.256.256.256:1234/system"
+def _testDetailsConsoleChecksTCP(app, fakeuri, msg):
     uri = tests.utils.URIs.test_full + ",fakeuri=%s" % fakeuri
     app.uri = uri
     app.open(xmleditor_enabled=True)
@@ -939,7 +951,6 @@ def testDetailsConsoleChecksTCP(app):
     _checkcon("Graphical console not configured")
     _stop()
 
-    # Add a SDL graphics device which can't be displayed
     detailsbtn.click()
     win.find("add-hardware", "push button").click()
     addhw = app.find_window("Add New Virtual Hardware")
@@ -951,4 +962,117 @@ def testDetailsConsoleChecksTCP(app):
     lib.utils.check(lambda: not addhw.active)
     lib.utils.check(lambda: win.active)
     _run()
-    _checkcon(".*configured to listen locally.*")
+    _checkcon(msg)
+
+
+def testDetailsConsoleTCPNonlocal(app):
+    """
+    Hit a specific warning when the connection has
+    non-SSH transport but the guest config is only listening locally
+    """
+    fakeuri = "qemu+tcp://foouser@256.256.256.256:1234/system"
+    msg = ".*configured to listen locally.*"
+    _testDetailsConsoleChecksTCP(app, fakeuri, msg)
+
+
+def testDetailsConsoleTCPLocal(app):
+    """
+    Ensure we don't hit the nonlocal check, when both graphics
+    and connection URI are localhost
+    """
+    fakeuri = "qemu+tcp://foouser@localhost:1234/system"
+    msg = "Viewer was disconnected\\."
+    _testDetailsConsoleChecksTCP(app, fakeuri, msg)
+
+
+def testDetailsConsoleSerialSwitch(app):
+    """
+    Test serial vs graphical console menu handling, across VM restarts,
+    which can hit some corner cases.
+    Hit a specific warning when the connection has
+    non-SSH transport but the guest config is only listening locally
+    """
+    app.open(xmleditor_enabled=True)
+    app.topwin.find("test\n", "table cell").doubleClick()
+    win = app.find_window("test on")
+    conpages = win.find("console-pages")
+    run = win.find("Run", "push button")
+    shutdown = win.find("Shut Down", "push button")
+    conbtn = win.find("Console", "radio button")
+    detailsbtn = win.find("Details", "radio button")
+
+    def _run():
+        win.click_title()
+        run.click()
+        lib.utils.check(lambda: not run.sensitive)
+    def _stop():
+        shutdown.click()
+        lib.utils.check(lambda: not shutdown.sensitive)
+    def _checkcon(msg):
+        conbtn.click()
+        lib.utils.check(lambda: conpages.showing)
+        conpages.find(msg)
+
+    def _open_textconsole_menu():
+        conbtn.click()
+        vmenu = win.find("^View$", "menu")
+        vmenu.click()
+        tmenu = win.find("Consoles", "menu")
+        tmenu.point()
+        app.sleep(.5)  # give console menu time to dynamically populate
+        return tmenu
+
+    def _find_textconsole_item(msg):
+        tmenu = _open_textconsole_menu()
+        return tmenu.find(msg, "radio menu item")
+
+    # Check initial state
+    _checkcon("Graphical console not configured")
+    _stop()
+
+    # Add graphics device
+    detailsbtn.click()
+    win.find("add-hardware", "push button").click()
+    addhw = app.find_window("Add New Virtual Hardware")
+    addhw.find("Graphics", "table cell").click()
+    addhw.find("XML", "page tab").click()
+    dev = '<graphics type="spice" autoport="yes"><listen type="none"/></graphics>'
+    addhw.find("XML editor").text = dev
+    addhw.find("Finish", "push button").click()
+    lib.utils.check(lambda: not addhw.active)
+    lib.utils.check(lambda: win.active)
+
+    # Add a serial
+    # Add graphics device
+    detailsbtn.click()
+    win.find("add-hardware", "push button").click()
+    addhw = app.find_window("Add New Virtual Hardware")
+    addhw.find("Serial", "table cell").click()
+    addhw.find("XML", "page tab").click()
+    dev = '<serial type="pty"/>'
+    addhw.find("XML editor").text = dev
+    addhw.find("Finish", "push button").click()
+    lib.utils.check(lambda: not addhw.active)
+    lib.utils.check(lambda: win.active)
+
+    _find_textconsole_item("Serial 1").click()
+    _run()
+    _checkcon(".*virDomainOpenConsole.*")
+    _stop()
+    _checkcon(".*Guest is not running.*")
+    _run()
+    _checkcon(".*virDomainOpenConsole.*")
+    _stop()
+    _checkcon(".*Guest is not running.*")
+    sitem = _find_textconsole_item("Serial 1")
+    lib.utils.check(lambda: sitem.sensitive)
+    lib.utils.check(lambda: sitem.checked)
+
+    # Remove serial
+    detailsbtn.click()
+    detailsbtn.click()
+    _select_hw(app, win, "Serial 1", "char-tab")
+    win.find("config-remove").click()
+    app.click_alert_button("Are you sure", "Yes")
+    _run()
+    _checkcon(".*SPICE error-connect.*")

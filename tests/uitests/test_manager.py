@@ -228,15 +228,21 @@ def testManagerWindowReposition(app):
     fmenu.find("View Manager", "menu item").click()
     lib.utils.check(lambda: manager.active)
 
-    manager.window_maximize()
-    newx = manager.position[0]
-    newy = manager.position[1]
+    # Use alt+f7 combo to move window
+    curxy = manager.title_coordinates()
+    newxy = (curxy[0] + 400, curxy[1] + 400)
+    manager.keyCombo("<alt>F7")
+    app.rawinput.click(*newxy)
+    checkxy = manager.position[0], manager.position[1]
     manager.window_close()
     host.click_title()
     host.find("File", "menu").click()
     host.find("View Manager", "menu item").click()
     lib.utils.check(lambda: manager.showing)
-    assert manager.position == (newx, newy)
+
+    # Results can be off by one or two, but it's not a virt-manager bug
+    assert abs(manager.position[0] - checkxy[0]) in range(3)
+    assert abs(manager.position[1] - checkxy[1]) in range(3)
 
 
 

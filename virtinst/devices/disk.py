@@ -281,6 +281,11 @@ class DeviceDisk(Device):
         return errdict
 
     @staticmethod
+    def get_volmap(conn):
+        return dict((vol.backing_store, vol)
+                      for vol in conn.fetch_all_vols() if vol.backing_store)
+
+    @staticmethod
     def path_in_use_by(conn, path, shareable=False, read_only=False):
         """
         Return a list of VM names that are using the passed path.
@@ -292,13 +297,36 @@ class DeviceDisk(Device):
         :param read_only: Path we are checking is marked read_only, so
             don't warn if it conflicts with another read_only source.
         """
+        volmap = DeviceDisk.get_volmap(conn)
+        return DeviceDisk._path_in_use_by(conn, path, volmap, shareable, read_only)
+
+    @staticmethod
+    def paths_in_use_by(conn, paths, shareable=False, read_only=False):
+        """
+        Return a list of lists of VM names that are using the passed paths.
+        When handling a list of paths, this method is faster than calling
+        path_in_use_by() separately as it takes time to call conn.fetch_all_vols().
+
+        :param conn: virConnect to check VMs
+        :param paths: Paths to check for
+        :param shareable: Path we are checking is marked shareable, so
+            don't warn if it conflicts with another shareable source.
+        :param read_only: Path we are checking is marked read_only, so
+            don't warn if it conflicts with another read_only source.
+        """
+        volmap = DeviceDisk.get_volmap(conn)
+        ret = []
+        for path in paths:
+            ret.append(DeviceDisk._path_in_use_by(conn, path, volmap, shareable, read_only))
+        return ret
+
+    @staticmethod
+    def _path_in_use_by(conn, path, volmap, shareable=False, read_only=False):
         if not path:
             return []
 
         # Find all volumes that have 'path' somewhere in their backing chain
         vols = []
-        volmap = dict((vol.backing_store, vol)
-                      for vol in conn.fetch_all_vols() if vol.backing_store)
         backpath = path
         while backpath in volmap:
             vol = volmap[backpath]
@@ -480,6 +508,12 @@ class DeviceDisk(Device):
     driver_io = XMLProperty("./driver/@io")
     driver_iothread = XMLProperty("./driver/@iothread", is_int=True)
     driver_queues = XMLProperty("./driver/@queues", is_int=True)
+    driver_discard_no_unref = XMLProperty("./driver/@discard_no_unref", is_onoff=True)
+
+    driver_metadata_cache_max_size = XMLProperty(
+        "./driver/metadata_cache/max_size", is_int=True)
+    driver_metadata_cache_max_size_unit = XMLProperty(
+        "./driver/metadata_cache/max_size/@unit")
 
     error_policy = XMLProperty("./driver/@error_policy")
     serial = XMLProperty("./serial")
@@ -487,6 +521,7 @@ class DeviceDisk(Device):
     startup_policy = XMLProperty("./source/@startupPolicy")
     logical_block_size = XMLProperty("./blockio/@logical_block_size")
     physical_block_size = XMLProperty("./blockio/@physical_block_size")
+    discard_granularity = XMLProperty("./blockio/@discard_granularity")
 
     iotune_rbs = XMLProperty("./iotune/read_bytes_sec", is_int=True)
     iotune_ris = XMLProperty("./iotune/read_iops_sec", is_int=True)
@@ -631,6 +666,11 @@ class DeviceDisk(Device):
         return self._storage_backend.get_path()
 
     def set_source_path(self, newpath):
+        # Some file managers use 'file://' when passing files to
+        # virt-manager, we need to strip it from the newpath.
+        if newpath is not None:
+            newpath = newpath.removeprefix("file://")
+
         if self._storage_backend.will_create_storage():
             raise xmlutil.DevError(
                     "Can't change disk path if storage creation info "

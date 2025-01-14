@@ -1,0 +1,9 @@
+*~
+*.pyc
+*.gmo
+
+/build
+
+/.coverage
+
+/data/gschemas.compiled

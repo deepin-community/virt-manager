@@ -6,6 +6,7 @@
 import atexit
 import io
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -52,12 +53,18 @@ NEW_FILES = [
     TMP_IMAGE_DIR + "new3.img",
     TMP_IMAGE_DIR + "exist1-clone.img",
     TMP_IMAGE_DIR + "exist2-clone.img",
+
+    TMP_IMAGE_DIR + "test-clone1.file",
+    TMP_IMAGE_DIR + "other-serial-clone.file",
+    TMP_IMAGE_DIR + "serial-exists-clone-1.file",
 ]
 
 # Images that are expected to exist before a command is run
 EXIST_FILES = [
     TMP_IMAGE_DIR + "exist1.img",
     TMP_IMAGE_DIR + "exist2.img",
+
+    TMP_IMAGE_DIR + "serial-exists-clone.file",
 ]
 
 
@@ -65,8 +72,10 @@ TEST_DATA = {
     'URI-TEST-FULL': utils.URIs.test_full,
     'URI-TEST-REMOTE': utils.URIs.test_remote,
     'URI-KVM-X86': utils.URIs.kvm_x86,
+    'URI-KVM-X86-NODOMCAPS': utils.URIs.kvm_x86_nodomcaps,
     'URI-KVM-ARMV7L': utils.URIs.kvm_armv7l,
     'URI-KVM-AARCH64': utils.URIs.kvm_aarch64,
+    'URI-KVM-LOONGARCH64': utils.URIs.kvm_loongarch64,
     'URI-KVM-PPC64LE': utils.URIs.kvm_ppc64le,
     'URI-KVM-S390X': utils.URIs.kvm_s390x,
     'URI-QEMU-RISCV64': utils.URIs.qemu_riscv64,
@@ -121,6 +130,12 @@ def no_osinfo_linux2020_virtio():
     linux2020 = OSDB.lookup_os("linux2020")
     if not linux2020 or not linux2020.supports_virtiogpu():
         return "osinfo is too old: missing linux2020 with virtio-gpu"
+
+
+def no_osinfo_win11():
+    win11 = OSDB.lookup_os("win11")
+    if not win11:
+        return "osinfo is too old: no win11 entry"
 
 
 ######################
@@ -335,10 +350,10 @@ class Command(object):
             _raise_error("Expected command to %s, but it didn't.\n" %
                  (self.check_success and "pass" or "fail"))
 
-        if self.grep and self.grep not in output:
-            _raise_error("Didn't find grep=%s" % self.grep)
-        if self.nogrep and self.nogrep in output:
-            _raise_error("Found grep=%s when we shouldn't see it" %
+        if self.grep and not re.search(self.grep, output):
+            _raise_error("Didn't find regex grep=%s" % self.grep)
+        if self.nogrep and re.search(self.nogrep, output):
+            _raise_error("Found regex grep=%s when we shouldn't see it" %
                     self.nogrep)
 
         if self.compare_file:
@@ -443,7 +458,7 @@ class App(object):
         self._add(cat, args, None, check_success=True, **kwargs)
     def add_invalid(self, cat, args, **kwargs):
         if "grep" not in kwargs:
-            raise Exception("grep= must be passed for add_invalid")
+            raise RuntimeError("grep= must be passed for add_invalid")
         self._add(cat, args, None, check_success=False, **kwargs)
     def add_compare(self, cat, args, compbase, **kwargs):
         self._add(cat, args, compbase,
@@ -511,7 +526,8 @@ numa.interconnects.latency0.initiator=0,numa.interconnects.latency0.target=0,num
 numa.interconnects.latency1.initiator=0,numa.interconnects.latency1.target=2,numa.interconnects.latency1.cache=1,numa.interconnects.latency1.type=access,numa.interconnects.latency1.value=10,numa.interconnects.latency1.unit=ns,\
 numa.interconnects.bandwidth0.initiator=0,numa.interconnects.bandwidth0.target=0,numa.interconnects.bandwidth0.type=access,numa.interconnects.bandwidth0.value=204800,\
 numa.interconnects.bandwidth1.initiator=0,numa.interconnects.bandwidth1.target=2,numa.interconnects.bandwidth1.cache=1,numa.interconnects.bandwidth1.type=access,numa.interconnects.bandwidth1.value=409600,numa.interconnects.bandwidth1.unit=KiB,\
-cache.mode=emulate,cache.level=3
+cache.mode=emulate,cache.level=3,\
+maxphysaddr.mode=emulate,maxphysaddr.bits=46
 
 
 --numatune 1,2,3,5-7,^6,mode=strict,\
@@ -547,7 +563,25 @@ memorytune0.vcpus=0-3,memorytune0.node0.id=0,memorytune0.node0.bandwidth=60
 --metadata title=my-title,description=my-description,uuid=00000000-1111-2222-3333-444444444444,genid=e9392370-2917-565e-692b-d057f46512d6,genid_enable=yes
 
 
---features apic.eoi=off,hap=on,hyperv.synic.state=on,hyperv.reset.state=off,hyperv.spinlocks.state=on,hyperv.spinlocks.retries=5678,pae=on,pmu.state=on,pvspinlock.state=off,smm.state=off,viridian=on,vmcoreinfo.state=on,vmport.state=off,kvm.hidden.state=on,hyperv.vapic.state=off,hyperv.relaxed.state=off,gic.version=host,kvm.hint-dedicated.state=on,kvm.poll-control.state=on,ioapic.driver=qemu,acpi=off,eoi=on,privnet=on,hyperv_synic=on,hyperv_reset=on,hyperv_spinlocks=on,hyperv_spinlocks_retries=5678,vmport=off,pmu=off,vmcoreinfo=on,kvm_hidden=off,hyperv_vapic=on,smm=off
+--features apic.eoi=off,hap=on,pae=on,pmu.state=on,pvspinlock.state=off,smm.state=off,viridian=on,vmcoreinfo.state=on,vmport.state=off,kvm.hidden.state=on,gic.version=host,kvm.hint-dedicated.state=on,kvm.poll-control.state=on,ioapic.driver=qemu,acpi=off,eoi=on,privnet=on,vmport=off,pmu=off,vmcoreinfo=on,kvm_hidden=off,smm=off,\
+hyperv.relaxed.state=off,\
+hyperv.vapic.state=off,hyperv_vapic=on,\
+hyperv.spinlocks.state=on,hyperv_spinlocks=on,\
+hyperv.spinlocks.retries=5678,hyperv_spinlocks_retries=5678,\
+hyperv.vpindex.state=on,\
+hyperv.runtime.state=on,\
+hyperv.synic.state=on,hyperv_synic=on,\
+hyperv.stimer.state=on,\
+hyperv.stimer.direct.state=on,\
+hyperv.reset.state=off,hyperv_reset=on,\
+hyperv.frequencies.state=on,\
+hyperv.reenlightenment.state=on,\
+hyperv.tlbflush.state=on,\
+hyperv.ipi.state=on,\
+hyperv.evmcs.state=on,\
+hyperv.avic.state=on,\
+kvm.pv-ipi.state=on,\
+msrs.unknown=ignore
 
 
 --clock offset=utc,hpet_present=no,rtc_tickpolicy=merge,timer2.name=hypervclock,timer3.name=pit,timer1.present=yes,timer3.tickpolicy=delay,timer2.present=no,timer4.name=rtc,timer5.name=tsc,timer6.name=tsc,timer4.track=wall,timer5.frequency=10,timer6.mode=emulate,timer7.name=rtc,timer7.tickpolicy=catchup,timer7.catchup.threshold=123,timer7.catchup.slew=120,timer7.catchup.limit=10000,rtc_present=no,pit_present=yes,pit_tickpolicy=catchup,tsc_present=no,platform_present=no,hypervclock_present=no,platform_tickpolicy=foo,hpet_tickpolicy=bar,tsc_tickpolicy=wibble,kvmclock_tickpolicy=wobble,hypervclock_tickpolicy=woo
@@ -602,9 +636,12 @@ source.reservations.managed=no,source.reservations.source.type=unix,source.reser
 --disk size=.0001,format=raw,transient=on,transient.shareBacking=yes
 --disk size=.0001,pool=pool-logical
 --disk path=%(EXISTIMG1)s,type=dir
---disk path=/fooroot.img,size=.0001,transient=on
+--disk path=file:///fooroot.img,size=.0001,transient=on
 --disk source.dir=/
 --disk type=nvme,source.type=pci,source.managed=no,source.namespace=2,source.address.domain=0x0001,source.address.bus=0x02,source.address.slot=0x00,source.address.function=0x0
+--disk /tmp/disk1.qcow2,size=16,driver.type=qcow2,driver.metadata_cache.max_size=2048,driver.metadata_cache.max_size.unit=KiB
+--disk /tmp/disk2.qcow2,size=16,driver.type=qcow2,driver.discard=unmap,driver.discard_no_unref=on
+--disk /tmp/disk3.qcow2,size=16,driver.type=qcow2,blockio.discard_granularity=4096
 
 
 --network user,mac=12:34:56:78:11:22,portgroup=foo,link_state=down,rom_bar=on,rom_file=/tmp/foo
@@ -615,6 +652,14 @@ source.reservations.managed=no,source.reservations.source.type=unix,source.reser
 --network vhostuser,source_type=unix,source_path=/tmp/vhost1.sock,source_mode=server,model=virtio,source.type=unix,source.path=/tmp/vhost1.sock,address.type=pci,address.bus=0x00,address.slot=0x10,address.function=0x0,address.domain=0x0000
 --network user,address.type=ccw,address.cssid=0xfe,address.ssid=0,address.devno=01,boot.order=15,boot.loadparm=SYSTEM1
 --network model=vmxnet3
+--network backend.type=passt,backend.logFile=/tmp/foo.log,portForward0.proto=tcp,portForward0.address=192.168.10.10,portForward0.dev=eth0,portForward0.range0.start=4000,portForward0.range0.end=5000,portForward0.range0.to=10000,portForward0.range0.exclude=no,portForward0.range1.start=6000,portForward1.proto=tcp,portForward1.range0.start=2022,portForward1.range0.to=22
+--network passt,portForward=8080:80
+--network passt,portForward=8080
+--network passt,portForward0=7000-8000/udp,portForward1=127.0.0.1:2222:22
+--network passt,portForward0=2001:db8:ac10:fd01::1:10:3000-4000:30,portForward1=127.0.0.1:5000-6000:5
+--network type=hostdev,source.address.type=pci,source.address.domain=0x0,source.address.bus=0x00,source.address.slot=0x07,source.address.function=0x0
+--network hostdev=pci_0000_00_09_0
+--network hostdev=0:0:4.0
 
 
 --graphics sdl
@@ -690,9 +735,6 @@ source.reservations.managed=no,source.reservations.source.type=unix,source.reser
 --hostdev wlan0,type=net
 --hostdev /dev/vdz,type=storage
 --hostdev /dev/pty7,type=misc
---hostdev mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110,address.type=ccw,address.cssid=0xfe,address.ssid=0x1,address.devno=0x0008
---hostdev mdev_11f92c9d_b0b0_4016_b306_a8071277f8b9
---hostdev mdev_4b20d080_1b54_4048_85b3_a6a62d165c01,address.type=pci,address.domain=0x0000,address.bus=0x01,address.slot=0x01,address.function=0x0,address.zpci.uid=0x0001,address.zpci.fid=0x00000001
 
 
 --filesystem /source,/target,alias.name=testfsalias,driver.ats=on,driver.iommu=off,driver.packed=on,driver.page_per_vq=off
@@ -711,6 +753,8 @@ source.reservations.managed=no,source.reservations.source.type=unix,source.reser
 --soundhw default
 --sound ac97
 --sound codec0.type=micro,codec1.type=duplex,codec2.type=output
+--sound model=usb,multichannel=yes
+--sound model=virtio,streams=4
 
 
 --audio id=1,type=spice
@@ -720,6 +764,7 @@ source.reservations.managed=no,source.reservations.source.type=unix,source.reser
 --video cirrus
 --video model=qxl,vgamem=1,ram=2,vram=3,heads=4,accel3d=yes,vram64=65
 --video model=qxl,model.vgamem=1,model.ram=2,model.vram=3,model.heads=4,model.acceleration.accel3d=yes,model.vram64=65
+--video model=virtio,model.blob=on
 
 
 --smartcard passthrough,type=spicevmc
@@ -753,7 +798,9 @@ source.reservations.managed=no,source.reservations.source.type=unix,source.reser
 --vsock cid=17
 
 
---tpm passthrough,model=tpm-crb,path=/dev/tpm0,backend.encryption.secret=11111111-2222-3333-4444-5555555555,backend.persistent_state=yes,active_pcr_banks.sha1=on,active_pcr_banks.sha256=yes,active_pcr_banks.sha384=yes,active_pcr_banks.sha512=yes,version=2.0
+--tpm passthrough,model=tpm-crb,path=/dev/tpm0,backend.encryption.secret=11111111-2222-3333-4444-5555555555,backend.persistent_state=yes,backend.active_pcr_banks.sha1=on,backend.active_pcr_banks.sha256=yes,backend.active_pcr_banks.sha384=yes,backend.active_pcr_banks.sha512=yes,version=2.0
+
+--tpm model=tpm-tis,backend.type=emulator,backend.version=2.0,backend.debug=3,backend.source.type=dir,backend.source.path=/some/dir
 
 
 --watchdog ib700,action=pause
@@ -791,6 +838,13 @@ source.reservations.managed=no,source.reservations.source.type=unix,source.reser
 
 """, "many-devices", predefine_check="8.4.0")
 
+# Need to extract from the many-devices test as it was fixed in libvirt 10.4.0
+c.add_compare("""
+--hostdev mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110,address.type=ccw,address.cssid=0xfe,address.ssid=0x1,address.devno=0x0008
+--hostdev mdev_11f92c9d_b0b0_4016_b306_a8071277f8b9
+--hostdev mdev_4b20d080_1b54_4048_85b3_a6a62d165c01,address.type=pci,address.domain=0x0000,address.bus=0x01,address.slot=0x01,address.function=0x0,address.zpci.uid=0x0001,address.zpci.fid=0x00000001
+""", "mdev-devices", prerun_check="10.4.0")
+
 
 # Specific XML test cases #1
 c.add_compare(
@@ -818,6 +872,7 @@ c.add_compare(
 --smartcard none
 --tpm none
 --rng none
+--input none
 """, "singleton-config-1")
 
 
@@ -830,7 +885,7 @@ c.add_compare("--pxe "
 "--cpuset 1,3-5 "  # setting compat --cpuset when --vcpus is not present
 # --boot loader settings here, or they will conflict with firmware=efi
 # in other test cases
-"--boot loader_ro=yes,loader.type=rom,loader=/tmp/foo,loader_secure=no "
+"--boot loader_ro=yes,loader.type=rom,loader=/tmp/foo,loader_secure=no,loader.stateless=yes"
 
 # 'default' handling for solo devices
 """
@@ -859,7 +914,7 @@ c.add_compare(""
 
 # --memdev setup has a lot of interconnected validation, it's easier to keep this separate
 c.add_compare("--pxe "
-"--memory hotplugmemorymax=2048,hotplugmemoryslots=3 "
+"--memory hotplugmemorymax=4096,hotplugmemoryslots=3 "
 "--cpu cell0.cpus=0,cell0.memory=1048576 "
 
 "--memdev dimm,access=private,target_size=256,target_node=0,"
@@ -873,13 +928,19 @@ c.add_compare("--pxe "
 "address.type=dimm,address.base=0x100000000,address.slot=1,"
 "source.pmem=on,source.alignsize=2048,target.readonly=on "
 
+"--memdev virtio-mem,target_node=0,target.block=2048,"
+"target_size=512,target.requested=524288,target.address_base=0x180000000 "
+
+"--memdev virtio-pmem,source.path=/tmp/virtio_pmem,"
+"target_size=512,target.address_base=0x1a0000000 "
+
 "", "memory-hotplug", precompare_check="5.3.0")
 
 
 
 # Hitting test driver specific output
 c.add_compare("--connect " + utils.URIs.test_suite + " "
-"--cpu host-passthrough,migratable=on "  # migratable=on is only accepted with host-passthrough
+"--cpu host-passthrough,migratable=on,maxphysaddr.mode=passthrough "  # migratable=on is only accepted with host-passthrough
 "--seclabel label=foobar.label,a1,z2,b3,relabel=yes,type=dynamic "  # fills in default model=testModel
 "--tpm default "  # --tpm default when domcaps missing
 "",
@@ -941,7 +1002,7 @@ c.add_invalid("--disk size=1 --file foobar", grep="Cannot mix --file")  # --disk
 ################################################
 
 c = vinst.add_category("invalid-devices", "--noautoconsole --nodisks --pxe --osinfo require=no")
-c.add_invalid("--clock foo_tickpolicy=merge", grep="Unknown --clock options: ['foo_tickpolicy']")  # Bad suboption
+c.add_invalid("--clock foo_tickpolicy=merge", grep="Unknown --clock options:.*'foo_tickpolicy'")  # Bad suboption
 c.add_invalid("--connect %(URI-TEST-FULL)s --host-device 1d6b:2", grep="corresponds to multiple node devices")
 c.add_invalid("--connect %(URI-TEST-FULL)s --host-device pci_8086_2850_scsi_host_scsi_host", grep="Unsupported node device type 'scsi_host'")  # Unsupported hostdev type
 c.add_invalid("--host-device foobarhostdev", grep="Unknown hostdev address string format")  # Unknown hostdev
@@ -966,15 +1027,20 @@ c.add_valid("--os-variant generic --pxe --ram 16", grep="Requested memory 16 MiB
 c.add_valid("--os-variant winxp --ram 32 --cdrom %(EXISTIMG1)s", grep="32 MiB is less than the recommended 64 MiB")  # Windows. Catch memory warning
 c.add_valid("--osinfo generic --pxe --autostart")  # --autostart flag
 c.add_valid("--cdrom %(EXISTIMG2)s --os-variant win2k3 --print-step 2")  # HVM windows install, print 3rd stage XML
+c.add_valid("--memory 512 --osinfo generic --boot cdrom")  # --boot XXX should imply --install no_install
 c.add_compare("--location location=%(TREEDIR)s --initrd-inject virt-install --extra-args ks=file:/virt-install", "initrd-inject")  # initrd-inject
 c.add_compare("--cdrom http://example.com/path/to/some.iso --os-variant detect=yes,require=no", "cdrom-url")
 c.add_compare("--pxe --print-step all --os-variant none", "simple-pxe")  # Diskless PXE install
 c.add_compare("--location ftp://example.com --os-variant auto", "fake-ftp")  # fake ftp:// install using urlfetcher.py mocking
 c.add_compare("--location https://foobar.com --os-variant detect=no,require=no", "fake-http")  # fake https:// install using urlfetcher.py mocking, but also hit --os-variant detect=no
 c.add_compare("--location https://foobar.com --os-variant detect=yes,name=win7", "os-detect-success-fallback")  # os detection succeeds, so fallback should be ignored
-c.add_compare("--pxe --os-variant detect=yes,name=win7", "os-detect-fail-fallback")  # os detection succeeds, so fallback should be ignored
+c.add_compare("--pxe --os-variant detect=yes,name=win7", "os-detect-fail-fallback")  # os detection fails, so we use fallback name=
 c.add_compare("--connect %(URI-KVM-X86)s --install fedora26", "osinfo-url")  # getting URL from osinfo
+c.add_valid("--location https://foobar.com --os-variant detect=yes,name=win7", nogrep="Please file a bug against virt-install")  # os detection succeeds, the fallback warning shouldn't be printed
+c.add_valid("--pxe --os-variant detect=yes,name=win7", grep="Please file a bug against virt-install")  # os detection fails, so fallback warning should be printed
+c.add_valid("--cdrom http://example.com/path/to/some.iso --os-variant detect=yes,require=no", grep="Please file a bug against virt-install")  # detection fails with require=no, we should print the error about using fallback name=
 c.add_invalid("--pxe --os-variant detect=yes,require=yes", grep="--os-variant/--osinfo OS name is required")  # No os-variant detected, but require=yes
+c.add_invalid("--pxe --osinfo detect=yes", grep="--os-variant/--osinfo OS name is required")  # --osinfo detect=on failed, but with implied require=yes
 c.add_invalid("--pxe --virt-type foobar", grep="Host does not support domain type")
 c.add_invalid("--pxe --os-variant farrrrrrrge", grep="Unknown OS name")
 c.add_invalid("--pxe --boot menu=foobar", grep="menu must be 'yes' or 'no'")
@@ -1007,7 +1073,7 @@ c.add_invalid("--connect test:///default --name foo --ram 64 --disk none --sdl -
 c.add_invalid("--paravirt --import --print-xml 2", grep="does not have XML step 2")  # PV Import install, no second XML step
 c.add_invalid("--paravirt --import --print-xml 7", grep="Unknown XML step request '7'")  # Invalid --print-xml arg
 c.add_invalid("--location kernel=foo,initrd=bar", grep="location kernel/initrd may only be specified with a location URL/path")
-c.add_invalid("--location http://example.com,kernel=foo", grep="location kernel/initrd must be be specified as a pair")
+c.add_invalid("--location http://example.com,kernel=foo", grep="location kernel/initrd must be specified as a pair")
 c.add_valid("--pxe --os-variant generic --os-type linux", grep="--os-type is deprecated")
 c.add_invalid("--os-variant solaris10 --unattended", grep="not support unattended")
 
@@ -1016,8 +1082,9 @@ c = vinst.add_category("misc-install", "--nographics --noautoconsole")
 c.add_compare("--connect %s --os-variant generic" % (utils.URIs.test_suite), "noargs-fail", use_default_args=False)  # No arguments
 c.add_compare("--connect %s --os-variant fedora26" % (utils.URIs.test_suite), "osvariant-noargs-fail", use_default_args=False)  # No arguments
 c.add_compare("--connect %s --os-variant fedora26 --pxe --print-xml" % (utils.URIs.test_suite), "osvariant-defaults-pxe", use_default_args=False)  # No arguments
-c.add_compare("--disk %(EXISTIMG1)s --os-variant fedora28 --cloud-init", "cloud-init-default", env={"VIRTINST_TEST_SUITE_CLOUDINIT": "1"})  # default --cloud-init behavior is root-password-generate=yes,disable=yes
-c.add_compare("--disk %(EXISTIMG1)s --os-variant fedora28 --cloud-init root-password-generate=yes,disable=no --sysinfo system.serial=foobar", "cloud-init-options1", env={"VIRTINST_TEST_SUITE_PRINT_CLOUDINIT": "1"})  # --cloud-init root-password-generate, with --sysinfo override
+c.add_valid("--disk %(EXISTIMG1)s --os-variant fedora28 --cloud-init", env={"VIRTINST_TEST_SUITE_CLOUDINIT": "1"})  # default --cloud-init, but without implied --print-xml, to hit some specific code paths
+c.add_compare("--connect %(URI-KVM-X86)s --disk %(EXISTIMG1)s --os-variant fedora28 --cloud-init --tpm default", "cloud-init-default", env={"VIRTINST_TEST_SUITE_CLOUDINIT": "1"})  # default --cloud-init behavior is root-password-generate=yes,disable=yes, forcing tpm
+c.add_compare("--connect %(URI-KVM-X86)s --disk %(EXISTIMG1)s --os-variant fedora28 --cloud-init root-password-generate=yes,disable=no --sysinfo system.serial=foobar --boot uefi", "cloud-init-options1", env={"VIRTINST_TEST_SUITE_PRINT_CLOUDINIT": "1"})  # --cloud-init root-password-generate, with --sysinfo override, with uefi
 c.add_compare("--disk %(EXISTIMG1)s --os-variant fedora28 --cloud-init root-password-file=%(ADMIN-PASSWORD-FILE)s,root-ssh-key=%(XMLDIR)s/cloudinit/ssh-key.txt,clouduser-ssh-key=%(XMLDIR)s/cloudinit/ssh-key2.txt --boot smbios.mode=none", "cloud-init-options2", env={"VIRTINST_TEST_SUITE_PRINT_CLOUDINIT": "1"})  # --cloud-init root-password-file with smbios.mode override
 c.add_compare("--disk %(EXISTIMG1)s --os-variant fedora28 --cloud-init ssh-key=%(XMLDIR)s/cloudinit/ssh-key.txt", "cloud-init-options3", env={"VIRTINST_TEST_SUITE_PRINT_CLOUDINIT": "1"})  # --cloud-init ssh-key
 c.add_compare("--disk %(EXISTIMG1)s --os-variant fedora28 --cloud-init user-data=%(XMLDIR)s/cloudinit/user-data.txt,meta-data=%(XMLDIR)s/cloudinit/meta-data.txt", "cloud-init-options4", env={"VIRTINST_TEST_SUITE_PRINT_CLOUDINIT": "1"})  # --cloud-init user-data=,meta-data=
@@ -1036,6 +1103,7 @@ c.add_compare("--reinstall test-cdrom --cdrom %(ISO-WIN7)s --unattended", "reins
 c.add_invalid("--reinstall test --cdrom %(ISO-WIN7)s", grep="already active")  # trying to reinstall an active VM should fail
 c.add_invalid("--reinstall test --osinfo none", grep="install method must be specified")  # missing install method
 c.add_valid("--osinfo list", grep="osinfo-query os")  # --osinfo list
+c.add_valid(f"--cdrom {MEDIA_DIR}/fake-win-multi.iso --disk none ")  # verify media that matches multi OS doesn't blow up.
 
 
 ####################
@@ -1046,7 +1114,7 @@ c = vinst.add_category("unattended-install", "--connect %(URI-KVM-X86)s --nograp
 c.add_compare("--install fedora26 --unattended profile=desktop,admin-password-file=%(ADMIN-PASSWORD-FILE)s,user-password-file=%(USER-PASSWORD-FILE)s,product-key=1234,user-login=foobar,reg-login=regtest", "osinfo-url-unattended", prerun_check=lambda: not unattended.OSInstallScript.have_libosinfo_installation_url())  # unattended install for fedora, using initrd injection
 c.add_compare("--location %(TREEDIR)s --unattended", "osinfo-unattended-treeapis", prerun_check=lambda: not LIBOSINFO_SUPPORT_LOCAL_TREE)  # unattended install using treeobj libosinfo APIs
 c.add_compare("--cdrom %(ISO-WIN7)s --unattended profile=desktop,admin-password-file=%(ADMIN-PASSWORD-FILE)s", "osinfo-win7-unattended", prerun_check=no_osinfo_unattended_win_drivers_cb)  # unattended install for win7
-c.add_compare("--os-variant fedora26 --unattended profile=jeos,admin-password-file=%(ADMIN-PASSWORD-FILE)s --location %(ISO-F26-NETINST)s", "osinfo-netinst-unattended")  # triggering the special netinst checking code
+c.add_compare("--os-variant fedora26 --unattended profile=jeos,admin-password-file=%(ADMIN-PASSWORD-FILE)s --location %(ISO-F26-NETINST)s", "osinfo-netinst-unattended", prerun_check=missing_xorriso)  # triggering the special netinst checking code
 c.add_compare("--os-variant silverblue29 --location http://example.com", "network-install-resources")  # triggering network-install resources override
 c.add_compare("--connect %(URI-TEST-REMOTE)s --os-variant win7 --cdrom %(EXISTIMG1)s --unattended", "unattended-remote-cdrom")
 c.add_valid("--pxe --os-variant fedora26 --unattended", grep="Using unattended profile 'desktop'")  # filling in default 'desktop' profile
@@ -1086,8 +1154,11 @@ c.add_compare("--cdrom %(EXISTIMG2)s --file %(EXISTIMG1)s --os-variant win2k3 --
 c.add_compare("--os-variant name=ubuntusaucy --nodisks --boot cdrom --virt-type qemu --cpu Penryn --input tablet --boot uefi --graphics vnc", "qemu-plain")  # plain qemu
 c.add_compare("--os-variant fedora20 --nodisks --boot network --graphics default --arch i686 --rng none", "qemu-32-on-64", prerun_check=has_old_osinfo)  # 32 on 64
 c.add_compare("--osinfo linux2020 --pxe", "linux2020", prerun_check=no_osinfo_linux2020_virtio)
+c.add_compare("--check disk_size=off --osinfo win11 --cdrom %(EXISTIMG1)s", "win11", prerun_check=no_osinfo_win11)
+c.add_compare("--check disk_size=off --osinfo win11 --cdrom %(EXISTIMG1)s --boot uefi=off", "win11-no-uefi")
 c.add_compare("--osinfo generic --disk none --location %(ISO-NO-OS)s,kernel=frib.img,initrd=/frob.img", "location-manual-kernel", prerun_check=missing_xorriso)  # --location with an unknown ISO but manually specified kernel paths
 c.add_compare("--disk %(EXISTIMG1)s --location %(ISOTREE)s --nonetworks", "location-iso", prerun_check=missing_xorriso)  # Using --location iso mounting
+c.add_compare("--disk %(EXISTIMG1)s --location %(ISOTREE)s --nonetworks --cloud-init user-data=%(XMLDIR)s/cloudinit/user-data.txt,meta-data=%(XMLDIR)s/cloudinit/meta-data.txt", "location-iso-and-cloud-init", prerun_check=missing_xorriso)  # Using --location iso mounting and --cloud-init at the same time
 c.add_compare("--disk %(EXISTIMG1)s --cdrom %(ISOLABEL)s", "cdrom-centos-label")  # Using --cdrom with centos CD label, should use virtio etc.
 c.add_compare("--disk %(EXISTIMG1)s --install bootdev=network --os-variant rhel5.4 --cloud-init none", "kvm-rhel5")  # RHEL5 defaults
 c.add_compare("--disk %(EXISTIMG1)s --install kernel=%(ISO-WIN7)s,initrd=%(ISOLABEL)s,kernel_args='foo bar' --os-variant rhel6.4 --unattended none", "kvm-rhel6")  # RHEL6 defaults. ISO paths are just to point at existing files
@@ -1104,13 +1175,14 @@ c.add_compare("--connect " + utils.URIs.kvm_x86_remote + " --import --disk %(EXI
 c.add_compare("--connect %(URI-KVM-X86)s --os-variant fedora26 --graphics spice --controller usb,model=none", "graphics-usb-disable")
 c.add_compare("--osinfo generic --boot uefi --disk size=1", "boot-uefi")
 c.add_compare("--osinfo generic --boot uefi --disk size=1 --tpm none --connect " + utils.URIs.kvm_x86_oldfirmware, "boot-uefi-oldcaps")
-c.add_compare("--osinfo linux2020 --boot uefi --launchSecurity sev --connect " + utils.URIs.kvm_amd_sev, "amd-sev")
+c.add_compare("--osinfo linux2020 --boot uefi=on --launchSecurity sev --connect " + utils.URIs.kvm_amd_sev, "amd-sev", prerun_check=no_osinfo_linux2020_virtio)
 
 c.add_invalid("--disk none --location nfs:example.com/fake --nonetworks", grep="NFS URL installs are no longer supported")
 c.add_invalid("--disk none --boot network --machine foobar", grep="domain type None with machine 'foobar'")
 c.add_invalid("--nodisks --boot network --arch mips --virt-type kvm", grep="any virtualization options for architecture 'mips'")
 c.add_invalid("--nodisks --boot network --paravirt --arch mips", grep=" 'xen' for architecture 'mips'")
 c.add_invalid("--osinfo generic --launchSecurity sev --connect " + utils.URIs.kvm_amd_sev, grep="SEV launch security requires a Q35 UEFI machine")
+c.add_invalid("--disk none --cloud-init --unattended --install fedora30", grep="Cannot use --unattended and --cloud-init at the same time")
 
 
 
@@ -1141,6 +1213,7 @@ c.add_compare("--connect %(URI-KVM-PPC64LE)s --import --disk %(EXISTIMG1)s --os-
 
 c.add_compare("--arch s390x --machine s390-ccw-virtio --connect %(URI-KVM-S390X)s --boot kernel=/kernel.img,initrd=/initrd.img --disk %(EXISTIMG1)s --disk %(EXISTIMG3)s,device=cdrom --os-variant fedora30 --panic default --graphics vnc", "s390x-cdrom", prerun_check=has_old_osinfo)
 c.add_compare("--connect %(URI-KVM-S390X)s --arch s390x --nographics --import --disk %(EXISTIMG1)s --os-variant fedora30", "s390x-headless")
+c.add_compare("--connect %(URI-KVM-S390X)s --arch s390x --import --disk none --osinfo fedora30", "s390x-default")
 
 
 
@@ -1148,8 +1221,12 @@ c.add_compare("--connect %(URI-KVM-S390X)s --arch s390x --nographics --import --
 # riscv tests #
 ###############
 
-c.add_compare("--connect %(URI-QEMU-RISCV64)s --arch riscv64 --os-variant fedora29 --import --disk %(EXISTIMG1)s --network default --graphics none", "riscv64-headless", precompare_check="5.3.0")
-c.add_compare("--connect %(URI-QEMU-RISCV64)s --arch riscv64 --os-variant fedora29 --import --disk %(EXISTIMG1)s --network default --graphics vnc", "riscv64-graphics", precompare_check="5.3.0", )
+c.add_compare("--connect %(URI-QEMU-RISCV64)s --arch riscv64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --network default --graphics none", "riscv64-headless")
+c.add_compare("--connect %(URI-QEMU-RISCV64)s --arch riscv64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --network default --graphics spice", "riscv64-graphics")
+c.add_compare("--connect %(URI-QEMU-RISCV64)s --arch riscv64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --boot kernel=/kernel.img,initrd=/initrd.img,cmdline='root=/dev/vda2'", "riscv64-kernel-boot")
+c.add_compare("--connect %(URI-QEMU-RISCV64)s --arch riscv64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --cloud-init", "riscv64-cloud-init")
+c.add_compare("--connect %(URI-QEMU-RISCV64)s --arch riscv64 --osinfo fedora29 --cdrom %(ISO-F26-NETINST)s", "riscv64-cdrom")
+c.add_compare("--connect %(URI-QEMU-RISCV64)s --arch riscv64 --osinfo fedora29 --unattended", "riscv64-unattended")
 
 
 
@@ -1176,16 +1253,31 @@ c.add_compare("--arch aarch64 --cdrom %(ISO-F26-NETINST)s --boot loader=CODE.fd,
 c.add_compare("--connect %(URI-KVM-AARCH64)s --disk %(EXISTIMG1)s --import --os-variant fedora21 --panic default --graphics vnc", "aarch64-kvm-import")  # --import test, but also test --panic no-op, and --graphics
 c.add_compare("--connect %(URI-KVM-AARCH64)s --disk size=1 --os-variant fedora22 --features gic_version=host --network network=default,address.type=pci --controller type=scsi,model=virtio-scsi,address.type=pci", "aarch64-kvm-gic")
 c.add_compare("--connect %(URI-KVM-AARCH64)s --osinfo fedora30 --arch aarch64 --disk none --pxe --boot firmware=efi", "aarch64-firmware-no-override")
+c.add_compare("--connect %(URI-KVM-AARCH64)s --disk %(EXISTIMG1)s --os-variant fedora28 --cloud-init", "aarch64-cloud-init")
 
 
 
-#################
-# AMD sev tests #
-#################
+#####################
+# loongarch64 tests #
+#####################
 
-c = vinst.add_category("kvm-x86_64-launch-security", "--disk none --noautoconsole --osinfo generic")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --network default --graphics none", "loongarch64-headless")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --network default --graphics spice", "loongarch64-graphics")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --boot kernel=/kernel.img,initrd=/initrd.img,cmdline='root=/dev/vda2'", "loongarch64-kernel-boot")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --import --disk %(EXISTIMG1)s --cloud-init", "loongarch64-cloud-init")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --cdrom %(ISO-F26-NETINST)s", "loongarch64-cdrom")
+c.add_compare("--connect %(URI-KVM-LOONGARCH64)s --arch loongarch64 --osinfo fedora29 --unattended", "loongarch64-unattended")
 
 
+
+#############################
+# x86 Launch security tests #
+#############################
+
+c = vinst.add_category("kvm-x86_64-launch-security", "--disk none --noautoconsole --osinfo generic --connect %(URI-KVM-X86)s")
+c.add_compare("--boot uefi --machine q35 --launchSecurity type=sev-snp,policy=0x24", "x86_64-launch-security-sev-snp", prerun_check="10.5.0")
+c.add_compare("--boot uefi --machine q35 --launchSecurity type=sev-snp,vcek=on,kernelHashes=on,authorKey=on,idBlock=Tm93IHN0YW5kIGFzaWRlLCB3b3J0aHkgYWR2ZXJzYXJ5IU5vdyBzdGFuZCBhc2lkZSwgd29ydGh5IGFkdmVyc2FyeSFOb3cgc3RhbmQgYXNpZGUsIHdvcnRoeSBhZHZl,hostData=V2UgYXJlIHRoZSBLbmlnaHRzIHdobyBzYXkgbmkhISE=,policy=0x24,guestVisibleWorkarounds=V2UgYXJlIHRoZSBLbmlnaA==,idAuth=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", "x86_64-launch-security-sev-snp-full", prerun_check="10.5.0")
+c.add_invalid("--machine pc --launchSecurity type=sev-snp,policy=0x24", grep="SEV-SNP launch security requires a Q35 UEFI machine", prerun_check="10.5.0")
 
 
 ######################
@@ -1208,6 +1300,7 @@ c.add_compare("--init /usr/bin/httpd", "manual-init")
 c = vinst.add_category("xen", "--noautoconsole --connect " + utils.URIs.xen)
 c.add_valid("--disk %(EXISTIMG1)s --location %(TREEDIR)s --paravirt --graphics none")  # Xen PV install headless
 c.add_compare("--disk %(EXISTIMG1)s --import", "xen-default")  # Xen default
+c.add_compare("--disk %(EXISTIMG1)s --machine xenpvh --boot os_type=xenpvh --import", "xenpvh")  # Xen default
 c.add_compare("--disk %(EXISTIMG1)s --location %(TREEDIR)s --paravirt --controller xenbus,maxGrantFrames=64 --input default", "xen-pv", precompare_check="5.3.0")  # Xen PV
 c.add_compare("--osinfo generic --disk  /pool-iscsi/diskvol1 --cdrom %(EXISTIMG1)s --livecd --hvm", "xen-hvm")  # Xen HVM
 c.add_compare("--osinfo generic --disk  /pool-iscsi/diskvol1 --cdrom %(EXISTIMG1)s --install no_install=yes --hvm", "xen-hvm")  # Ensure --livecd and --install no_install are essentially identical
@@ -1239,6 +1332,14 @@ c = vinst.add_category("bhyve", "--name foobhyve --noautoconsole --connect " + u
 c.add_compare("--osinfo generic --boot uefi --disk none --ram 256 --pxe", "bhyve-uefi")
 c.add_compare("--os-variant fedora27", "bhyve-default-f27")
 
+
+
+###########################
+# qemu hvf specific tests #
+###########################
+
+c = vinst.add_category("bhyve", "--name foohvf --noautoconsole --connect " + utils.URIs.hvf_x86)
+c.add_compare("--os-variant fedora27", "hvf-default-f27")
 
 
 
@@ -1285,6 +1386,10 @@ c.add_valid("--connect %(URI-KVM-X86)s --install fedora28 --cloud-init", grep="P
 c.add_invalid("--pxe --autoconsole badval", grep="Unknown autoconsole type 'badval'")
 c.add_invalid("--pxe --autoconsole text --wait -1", grep="exceeded specified time limit")  # hits a specific code path where we skip console waitpid
 
+c = vinst.add_category("hyperv", "--disk none --osinfo win11 --import")
+c.add_compare("--connect %(URI-KVM-X86)s --features hyperv.vpindex.state=off", "hyperv_disable_vpindex")  # disable feature that is required by others to test they are not enabled by default
+c.add_compare("--connect %(URI-KVM-X86-NODOMCAPS)s", "hyperv_no_domcaps")  # don't use domain capabilities to enable only some features by version check
+
 
 ##################
 # virt-xml tests #
@@ -1322,16 +1427,16 @@ c.add_invalid("test --edit --cpu host-passthrough --boot hd,network", grep="Only
 c.add_invalid("test --edit", grep="No change specified.")
 c.add_invalid("test --edit 2 --cpu host-passthrough", grep="'--edit 2' requested but there's only 1 --cpu object in the XML")
 c.add_invalid("test-for-virtxml --edit 5 --tpm /dev/tpm", grep="'--edit 5' requested but there's only 1 --tpm object in the XML")
-c.add_invalid("test-for-virtxml --add-device --host-device 0x04b3:0x4485 --update --confirm", input_text="yes", grep="not supported by the connection driver: virDomainAttachDevice")
+c.add_invalid("test-for-virtxml --add-device --host-device 0x04b3:0x4485 --update --confirm", input_text="yes", grep="not supported")
 c.add_invalid("test-for-virtxml --remove-device --host-device 1 --update --confirm", input_text="foo\nyes\n", grep="not supported by the connection driver: virDomainDetachDevice")
-c.add_invalid("test-for-virtxml --edit --graphics password=foo,keymap= --update --confirm", input_text="yes", grep="not supported by the connection driver: virDomainUpdateDeviceFlags")
+c.add_invalid("test-for-virtxml --edit --graphics password=foo,keymap= --update --confirm", input_text="yes", grep="(not supported by the connection driver: virDomainUpdateDeviceFlags|persistent update of device 'graphics' is not supported)")
 c.add_invalid("--build-xml --memory 10,maxmemory=20", grep="--build-xml not supported for --memory")
 c.add_invalid("test-state-shutoff --edit sparse=no --disk path=blah", grep="Don't know how to match device type 'disk' property 'sparse'")
-c.add_invalid("test --add-device --xml ./@foo=bar", grep="--xml can only be used with --edit")
+c.add_invalid("test --add-device --xml ./@foo=bar", grep="Cannot use --add-device with --xml")
 c.add_invalid("test-for-virtxml --edit --boot refresh-machine-type=yes", grep="Don't know how to refresh")
 c.add_compare("test --print-xml --edit --vcpus 7", "print-xml")  # test --print-xml
 c.add_compare("--edit --cpu host-passthrough", "stdin-edit", input_file=(_VIRTXMLDIR + "virtxml-stdin-edit.xml"))  # stdin test
-c.add_compare("--connect %(URI-KVM-X86)s --edit --boot refresh-machine-type=yes", "refresh-machine-type", input_file=(_VIRTXMLDIR + "virtxml-stdin-edit.xml"))  # refresh-machine-type test. we need to use stdin XML since we can't get the libvirt testdriver to start with the machine XML we need
+c.add_compare("--connect %(URI-KVM-X86)s --edit --print-diff --define --boot refresh-machine-type=yes", "refresh-machine-type", input_file=(_VIRTXMLDIR + "virtxml-refresh-machine-in.xml"))  # refresh-machine-type test. we need to use stdin XML since we can't get the libvirt testdriver to start with the machine XML we need
 c.add_compare("--build-xml --cpu pentium3,+x2apic", "build-cpu")
 c.add_compare("--build-xml --tpm path=/dev/tpm", "build-tpm")
 c.add_compare("--build-xml --blkiotune weight=100,device0.path=/dev/sdf,device.weight=200,device0.read_bytes_sec=10000,device0.write_bytes_sec=10000,device0.read_iops_sec=20000,device0.write_iops_sec=20000", "build-blkiotune")
@@ -1345,10 +1450,31 @@ c.add_compare("--confirm 1 --edit --cpu host-passthrough", "prompt-response", in
 c.add_compare("--edit --print-diff --qemu-commandline clearxml=yes", "edit-clearxml-qemu-commandline", input_file=(_VIRTXMLDIR + "virtxml-qemu-commandline-clear.xml"))
 c.add_compare("--print-diff --remove-device --serial 1", "remove-console-dup", input_file=(_VIRTXMLDIR + "virtxml-console-dup.xml"))
 c.add_compare("--print-diff --define --connect %(URI-KVM-X86)s test --edit --boot uefi", "edit-boot-uefi")
-c.add_compare("--print-diff --define --connect %(URI-KVM-X86)s test-many-devices --edit --cpu host-copy", "edit-cpu-host-copy")
+c.add_compare("--print-diff --define --connect %(URI-KVM-X86)s test-alternate-devs --edit --boot uefi=off", "edit-boot-uefi-off")
+c.add_compare("--print-diff --define --connect %(URI-KVM-X86)s test-many-devices --edit --cpu host-copy", "edit-cpu-host-copy", precompare_check="10.1.0")
 c.add_compare("--connect %(URI-KVM-X86)s test-many-devices --build-xml --disk source.pool=pool-disk,source.volume=sdfg1", "build-pool-logical-disk")
 c.add_compare("test --add-device --network default --update --confirm", "update-succeed", env={"VIRTXML_TESTSUITE_UPDATE_IGNORE_FAIL": "1", "VIRTINST_TEST_SUITE_INCREMENT_MACADDR": "1"}, input_text="yes\nyes\n")  # test hotplug success
 c.add_compare("test --add-device --network default --update --confirm --no-define", "update-nodefine-succeed", env={"VIRTXML_TESTSUITE_UPDATE_IGNORE_FAIL": "1"}, input_text="yes\n")  # test hotplug success without define
+
+# --convert-* tests
+c.add_compare("--connect %(URI-KVM-X86)s --print-diff --define --edit --convert-to-q35", "convert-to-q35", input_file=(_VIRTXMLDIR + "convert-to-q35-win10-in.xml"))
+c.add_compare("--connect %(URI-KVM-X86)s --print-diff --define --edit --convert-to-q35 num_pcie_root_ports=7", "convert-to-q35-numports", input_file=(_VIRTXMLDIR + "convert-to-q35-win10-in.xml"))
+c.add_compare("--connect %(URI-KVM-X86)s test --print-diff --define --edit --convert-to-vnc", "convert-to-vnc")
+c.add_compare("--connect %(URI-KVM-X86)s test --print-diff --define --edit --convert-to-vnc qemu-vdagent=on", "convert-to-vnc-vdagent")
+
+# Regression testing for historical --add-device/--remove-device/--edit multi option handling
+# Single `--edit` with multiple options are processed in sequence
+c.add_compare("test --print-diff --define --edit --boot emulator=/foo --boot bootmenu.enable=yes", "multi-edit-boot-backcompat")
+c.add_compare("test-for-virtxml --print-diff --define --edit --network model=foo --network model=virtio --network boot.order=7", "multi-edit-device-backcompat")
+# Single `--add-device` with multiple options will add multiple devices
+c.add_compare("test --print-diff --define --add-device --sound model=ich9 --sound model=ac97", "multi-add-device-backcompat")
+# Single `--remove-device` with multiple options will only remove the last device
+c.add_compare("test-for-virtxml --print-diff --define --remove-device --network type=network --network type=bridge", "multi-remove-device-backcompat")
+
+c.add_invalid("test --print-diff --define --add-device --sound model=ac97 --video model=virtio", grep="Only one change operation may be specified")
+c.add_invalid("test-for-virtxml --print-diff --define --remove-device --sound model=ich6 --video model=vmvga", grep="Only one change operation may be specified")
+c.add_invalid("test-for-virtxml --print-diff --define --edit --sound model=ac97 --video model=virtio", grep="Only one change operation may be specified")
+
 
 
 c = vixml.add_category("simple edit diff", "test-for-virtxml --edit --print-diff --define")
@@ -1442,8 +1568,12 @@ c.add_compare("--remove-device --disk /dev/null", "remove-disk-path")
 c.add_compare("--remove-device --video all", "remove-video-all")
 c.add_compare("--remove-device --host-device 0x04b3:0x4485", "remove-hostdev-name")
 c.add_compare("--remove-device --memballoon all", "remove-memballoon")
-c.add_compare("--add-device --hostdev mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110", "add-hostdev-mdev")
+c.add_compare("--add-device --hostdev mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110", "add-hostdev-mdev", prerun_check="10.4.0")
 c.add_compare("--remove-device --hostdev mdev_b1ae8bf6_38b0_4c81_9d44_78ce3f520496", "remove-hostdev-mdev")
+
+c = vixml.add_category("edit/remove spice graphics", "test-spice --print-diff --define")
+c.add_compare("--edit --graphics type=vnc", "change-spice-to-vnc")
+c.add_compare("--remove-device --graphics type=spice", "remove-spice-graphics")
 
 c = vixml.add_category("add/rm devices and start", "test-state-shutoff --print-diff --start")
 c.add_invalid("--add-device --pm suspend_to_disk=yes", grep="Cannot use --add-device with --pm")  # --add-device without a device
@@ -1454,7 +1584,7 @@ c.add_compare("--define --add-device --host-device usb_device_4b3_4485_noserial"
 c.add_compare("--add-device --disk %(EXISTIMG1)s,bus=virtio,target=vdf", "add-disk-basic-start")
 c.add_compare("--add-device --disk %(NEWIMG1)s,size=.01", "add-disk-create-storage-start")
 c.add_compare("--remove-device --disk /dev/null", "remove-disk-path-start")
-c.add_compare("--add-device --hostdev mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110", "add-hostdev-mdev-start")
+c.add_compare("--add-device --hostdev mdev_8e37ee90_2b51_45e3_9b25_bf8283c03110", "add-hostdev-mdev-start", prerun_check="10.4.0")
 
 c = vixml.add_category("add/rm devices OS KVM", "--connect %(URI-KVM-X86)s test --print-diff --define")
 c.add_compare("--add-device --disk %(EXISTIMG1)s", "kvm-add-disk-os-from-xml")  # Guest OS (none) from XML
@@ -1478,6 +1608,7 @@ _CLONE_NVRAM_MISSING = "--original-xml %s/clone-nvram-missing.xml" % _CLONEXMLDI
 _CLONE_EMPTY = "--original-xml %s/clone-empty.xml" % _CLONEXMLDIR
 _CLONE_NET_RBD = "--original-xml %s/clone-net-rbd.xml" % _CLONEXMLDIR
 _CLONE_NET_HTTP = "--original-xml %s/clone-net-http.xml" % _CLONEXMLDIR
+_CLONE_SERIAL = "--original-xml %s/clone-serial.xml" % _CLONEXMLDIR
 
 
 vclon = App("virt-clone")
@@ -1489,7 +1620,7 @@ c.add_invalid(_CLONE_UNMANAGED + " --auto-clone", grep="does not exist")  # Auto
 
 c = vclon.add_category("misc", "")
 c.add_compare("--connect %(URI-KVM-X86)s -o test-clone --auto-clone", "clone-auto1")
-c.add_compare("--connect %(URI-TEST-FULL)s -o test-clone-simple --name newvm --auto-clone", "clone-auto2")
+c.add_compare("--connect %(URI-TEST-FULL)s -o test-clone-simple --name newvm --auto-clone --reflink", "clone-auto2")
 c.add_compare("--connect %(URI-KVM-X86)s " + _CLONE_NVRAM + " --auto-clone", "clone-nvram")  # hits a particular nvram code path
 c.add_compare("--connect %(URI-KVM-X86)s " + _CLONE_NVRAM + " --auto-clone --nvram /nvram/my-custom-path", "clone-nvram-path")  # hits a particular nvram code path
 c.add_compare("--connect %(URI-KVM-X86)s " + _CLONE_NVRAM_NEWPOOL + " --auto-clone", "nvram-newpool")  # hits a particular nvram code path
@@ -1501,6 +1632,7 @@ c.add_compare(_CLONE_EMPTY + " --auto-clone --print-xml", "empty")  # Auto flag,
 c.add_compare("--connect %(URI-KVM-X86)s -o test-clone-simple --auto -f /foo.img --print-xml", "pool-test-cross-pool")  # cross pool cloning which fails with test driver but let's confirm the XML
 c.add_compare(_CLONE_MANAGED + " --auto-clone", "auto-managed")  # Auto flag w/ managed storage
 c.add_compare(_CLONE_UNMANAGED + " --auto-clone", "auto-unmanaged")  # Auto flag w/ local storage
+c.add_compare(_CLONE_SERIAL + " --auto-clone", "serial")  # Auto flag w/ serial console
 c.add_valid("--connect %(URI-TEST-FULL)s -o test-clone --auto-clone --nonsparse")  # Auto flag, actual VM, skip state check
 c.add_valid("--connect %(URI-TEST-FULL)s -o test-clone-simple -n newvm --preserve-data --file %(EXISTIMG1)s")  # Preserve data shouldn't complain about existing volume
 c.add_valid("-n clonetest " + _CLONE_UNMANAGED + " --file %(EXISTIMG3)s --file %(EXISTIMG4)s --check path_exists=off")  # Skip existing file check
@@ -1528,14 +1660,14 @@ c.add_valid(_CLONE_UNMANAGED + " --file %(NEWCLONEIMG1)s --file %(NEWCLONEIMG2)s
 c.add_valid(_CLONE_UNMANAGED + " --file %(NEWCLONEIMG1)s --file %(NEWCLONEIMG2)s --force-copy=fda")  # XML w/ disks, force copy a target with no media
 c.add_valid(_CLONE_MANAGED + " --file %(NEWIMG1)s")  # XML w/ managed storage, specify managed path
 c.add_valid(_CLONE_MANAGED + " --file %(NEWIMG1)s --reflink")  # XML w/ managed storage, specify managed path, use --reflink option
-c.add_valid(_CLONE_NOEXIST + " --file %(EXISTIMG1)s --preserve")  # XML w/ managed storage, specify managed path across pools
 c.add_compare("--connect %(URI-TEST-FULL)s -o test-clone -n test --auto-clone --replace", "replace")  # Overwriting existing running VM
 c.add_valid(_CLONE_MANAGED + " --auto-clone --force-copy fda")  # force copy empty floppy drive
 c.add_invalid("-o idontexist --auto-clone", grep="Domain 'idontexist' was not found")  # Non-existent vm name
 c.add_invalid(_CLONE_UNMANAGED, grep="Either --auto-clone or --file")  # XML file with several disks, but non specified
 c.add_invalid(_CLONE_UNMANAGED + " --file virt-install", grep="overwrite the existing path")  # XML w/ disks, overwriting existing files with no --preserve
 c.add_invalid(_CLONE_MANAGED + " --file /tmp/clonevol", grep="matching name 'default-vol'")  # will attempt to clone across pools, which test driver doesn't support
-c.add_invalid(_CLONE_NOEXIST + " --auto-clone", grep="'/i/really/dont/exist' does not exist.")  # XML w/ non-existent storage, WITHOUT --preserve
+c.add_valid(_CLONE_NOEXIST + " --file %(EXISTIMG1)s --preserve")  # XML w/ non-existent storage, but using --preserve flag shouldn't raise an error
+c.add_invalid(_CLONE_NOEXIST + " --file %(EXISTIMG1)s", grep="StoragePool.install testsuite mocked failure")  # XML w/ non-existent storage, WITHOUT --preserve, so it _should_ error
 
 
 

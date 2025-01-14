@@ -20,6 +20,7 @@ class _CapsCPU(XMLBuilder):
     XML_NAME = "cpu"
     arch = XMLProperty("./arch")
     model = XMLProperty("./model")
+    vendor = XMLProperty("./vendor")
 
 
 ######################################
@@ -97,6 +98,7 @@ class _CapsGuestFeatures(XMLBuilder):
     pae = XMLProperty("./pae", is_bool=True)
     acpi = XMLProperty("./acpi/@default", is_onoff=True)
     apic = XMLProperty("./apic/@default", is_onoff=True)
+    externalSnapshot = XMLProperty("./externalSnapshot", is_bool=True)
 
 
 class _CapsGuest(XMLBuilder):
@@ -126,7 +128,7 @@ class _CapsGuest(XMLBuilder):
         for m in mobjs:
             ret.append(m.name)
             if m.canonical and m.canonical not in ret:
-                ret.append(m.canonical)
+                ret.append(m.canonical)  # pragma: no cover
         return ret
 
     def is_machine_alias(self, domain, src, tgt):
@@ -165,6 +167,12 @@ class _CapsGuest(XMLBuilder):
         Return Tree if capabilities report support for APIC
         """
         return bool(self.features.apic)
+
+    def supports_externalSnapshot(self):
+        """
+        Return True if capabilities report support for external snapshots
+        """
+        return bool(self.features.externalSnapshot)
 
 
 ############################
@@ -236,7 +244,7 @@ class Capabilities(XMLBuilder):
         if not domains:
             return None
 
-        priority = ["kvm", "xen", "qemu"]
+        priority = ["kvm", "xen", "hvf", "qemu"]
 
         for t in priority:
             for d in domains:

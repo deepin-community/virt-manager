@@ -45,7 +45,7 @@ class DomainOs(XMLBuilder):
     def is_hvm(self):
         return self.os_type == "hvm"
     def is_xenpv(self):
-        return self.os_type in ["xen", "linux"]
+        return self.os_type in ["xen", "linux", "xenpvh"]
     def is_container(self):
         return self.os_type == "exe"
 
@@ -77,6 +77,8 @@ class DomainOs(XMLBuilder):
         return self.arch == "riscv64" or self.arch == "riscv32"
     def is_riscv_virt(self):
         return self.is_riscv() and str(self.machine).startswith("virt")
+    def is_loongarch64(self):
+        return self.arch == "loongarch64"
 
     ##################
     # XML properties #
@@ -86,6 +88,7 @@ class DomainOs(XMLBuilder):
     _XML_PROP_ORDER = [
             "firmware", "os_type", "arch", "machine", "firmware_features",
             "loader", "loader_ro", "loader_secure", "loader_type",
+            "loader_stateless",
             "nvram", "nvram_template",
             "init", "initargs", "initenvs", "initdir", "inituser", "initgroup",
             "kernel", "initrd", "kernel_args", "dtb", "acpi_tb", "acpi_tb_type",
@@ -100,6 +103,7 @@ class DomainOs(XMLBuilder):
     loader_ro = XMLProperty("./loader/@readonly", is_yesno=True)
     loader_type = XMLProperty("./loader/@type")
     loader_secure = XMLProperty("./loader/@secure", is_yesno=True)
+    loader_stateless = XMLProperty("./loader/@stateless", is_yesno=True)
 
     # BIOS bootloader options
     def _get_bootorder(self):

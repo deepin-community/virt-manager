@@ -187,6 +187,13 @@ class Installer(object):
         self._unattended_install_cdrom_device = dev.target
         guest.add_device(dev)
 
+        # The CDROM we just added might be a SCSI one. If that's the case,
+        # libvirt will automatically add the necessary controller for us, but
+        # depending on the architecture its choice of model might not be
+        # usable by the guest OS. Try to add a virtio-scsi controller, if
+        # supported, for the best chance of the CDROM actually being picked up
+        guest.add_virtioscsi_controller()
+
         if self.conn.in_testsuite():
             # Hack to set just the XML path differently for the test suite.
             # Setting this via regular 'path' will error that it doesn't exist
@@ -393,7 +400,7 @@ class Installer(object):
         elif unattended_scripts:
             self._prepare_unattended_data(guest, meter, unattended_scripts)
 
-        elif self._cloudinit_data:
+        if self._cloudinit_data:
             self._prepare_cloudinit(guest, meter)
 
     def _cleanup(self, guest):
@@ -494,22 +501,19 @@ class Installer(object):
             search_paths.append(self._cdrom_path())
         return search_paths
 
-    def has_install_phase(self):
+    def requires_postboot_xml_changes(self):
         """
-        Return True if the requested setup is actually installing an OS
-        into the guest. Things like LiveCDs, Import, or a manually specified
-        bootorder do not have an install phase.
+        Return True if the install operation has 2 XML phases, and
+        requires a hard VM poweroff to ensure the second stage is
+        used for subsequent boots.
         """
+        if self.has_cloudinit() or self.has_unattended():
+            return True
         if self._no_install:
             return False
         return bool(self._cdrom or
                     self._install_bootdev or
                     self._treemedia)
-
-    def _requires_postboot_xml_changes(self):
-        if self.has_cloudinit() or self.has_unattended():
-            return True
-        return self.has_install_phase()
 
     def options_specified(self):
         """
@@ -517,7 +521,7 @@ class Installer(object):
         """
         if self._no_install:
             return True
-        return self.has_install_phase()
+        return self.requires_postboot_xml_changes()
 
     def detect_distro(self, guest):
         """
@@ -564,12 +568,37 @@ class Installer(object):
     # guest install handling #
     ##########################
 
-    def _build_postboot_xml(self, final_xml, meter):
+    def _build_postboot_xml(self, guest_ro, final_xml, meter):
         initial_guest = Guest(self.conn, parsexml=final_xml)
         self._alter_bootconfig(initial_guest)
         self._alter_install_resources(initial_guest, meter)
         if self.has_cloudinit():
             initial_guest.set_smbios_serial_cloudinit()
+
+            # When shim in the guest sees unpopulated EFI NVRAM, like when
+            # we create a new UEFI VM, it invokes fallback.efi to populate
+            # initial NVRAM boot entries. When the guest also has a TPM device,
+            # shim will do a one time VM reset. This reset throws off the
+            # reboot detection that is central to virt-install's install
+            # process.
+            #
+            # The main install case that this will usually be relevant is
+            # the combo of UEFI and --cloud-init. The latter usually implies
+            # use of a distro cloud image, which will be using shim, and the
+            # --cloud-init process requires a multi stage install compared
+            # to just a plain import install.
+            #
+            # For that case, we disable the default TPM device for the first
+            # boot.
+            if (guest_ro.have_default_tpm and
+                guest_ro.is_uefi() and
+                len(initial_guest.devices.tpm)):
+                log.debug(
+                        "combo of default TPM, UEFI, and cloudinit is "
+                        "used. assuming this VM is using a linux distro "
+                        "cloud image with shim in the boot path. disabling "
+                        "TPM for the first boot")
+                initial_guest.remove_device(initial_guest.devices.tpm[0])
 
         final_guest = Guest(self.conn, parsexml=final_xml)
         self._remove_install_cdrom_media(final_guest)
@@ -580,8 +609,9 @@ class Installer(object):
     def _build_xml(self, guest, meter):
         initial_xml = None
         final_xml = guest.get_xml()
-        if self._requires_postboot_xml_changes():
-            initial_xml, final_xml = self._build_postboot_xml(final_xml, meter)
+        if self.requires_postboot_xml_changes():
+            initial_xml, final_xml = self._build_postboot_xml(
+                    guest, final_xml, meter)
         final_xml = self._pre_reinstall_xml or final_xml
 
         log.debug("Generated initial_xml: %s",
@@ -680,6 +710,7 @@ class Installer(object):
         # All installer XML alterations are made on this guest instance,
         # so the user_guest instance is left intact
         guest = Guest(self.conn, parsexml=user_guest.get_xml())
+        guest.have_default_tpm = user_guest.have_default_tpm
 
         try:
             self._prepare(guest, meter)

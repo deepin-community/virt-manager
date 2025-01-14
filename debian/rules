@@ -1,16 +1,19 @@
 #!/usr/bin/make -f
 
 %:
-	dh $@ --buildsystem=pybuild
+	dh $@ --buildsystem=meson
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+	  -Dcompile-schemas=false \
+	  -Dupdate-icon-cache=false \
+	  -Dtests=disabled
 
 override_dh_python3:
 	dh_python3 usr/share/virt-manager
 
 override_dh_auto_test:
 	pytest-3 -v -rs
-
-override_dh_auto_install:
-	python3 setup.py --no-update-icon-cache --no-compile-schemas install --force --install-layout=deb --root=debian/tmp --no-compile -O0
 
 override_dh_installdocs:
 	dh_installdocs --all NEWS.md

@@ -5,7 +5,7 @@ Maintainer: Debian Libvirt Maintainers <pkg-libvirt-maintainers@lists.alioth.deb
 Uploaders:
  Guido Günther <agx@sigxcpu.org>,
  Pino Toscano <pino@debian.org>,
-Standards-Version: 4.6.1
+Standards-Version: 4.7.0
 Vcs-Git: https://salsa.debian.org/libvirt-team/virt-manager.git
 Vcs-Browser: https://salsa.debian.org/libvirt-team/virt-manager
 Homepage: https://virt-manager.org/
@@ -14,10 +14,9 @@ Build-Depends:
  dh-python,
  dh-sequence-python3,
  gettext,
+ meson,
  python3,
- python3-distutils,
  python3-docutils,
- python3-setuptools,
 # for the tests
  cpio <!nocheck>,
  xorriso <!nocheck>,
@@ -25,6 +24,7 @@ Build-Depends:
  gir1.2-libvirt-glib-1.0 <!nocheck>,
  libglib2.0-bin <!nocheck>,
  libvirt-daemon <!nocheck>,
+ locales-all <!nocheck>,
  python3-argcomplete <!nocheck>,
  python3-gi (>= 3.31.3~) <!nocheck>,
  python3-libvirt <!nocheck>,
@@ -45,7 +45,7 @@ Depends:
  python3-gi (>= 3.31.3~),
  python3-gi-cairo,
  python3-libvirt (>= 0.7.1),
- virtinst (= ${binary:Version}),
+ virt-install (= ${binary:Version}),
  ${misc:Depends},
  ${python3:Depends},
 Recommends:
@@ -68,7 +68,7 @@ Description: desktop application for managing virtual machines
  allocation & virtual hardware. An embedded VNC and SPICE client viewer
  presents a full graphical console to the guest domain.
 
-Package: virtinst
+Package: virt-install
 Architecture: all
 Depends:
  e2fsprogs,
@@ -87,9 +87,12 @@ Recommends:
 Suggests:
  python3-argcomplete,
 Breaks:
- virt-manager (<< 1:3.2.0-3~),
+ virtinst (<< 1:5.0.0-2~),
 Replaces:
- virt-manager (<< 1:3.2.0-3~),
+ virtinst (<< 1:5.0.0-2~),
+Provides:
+ virt-clone (= ${binary:Version}),
+ virt-xml (= ${binary:Version}),
 Description: utilities to create and edit virtual machines
  This package contains some command line utilities to create and edit virtual
  machines:
@@ -100,3 +103,14 @@ Description: utilities to create and edit virtual machines
   - virt-install: provision operating systems into new virtual machines
   - virt-xml: easily edit libvirt domain XML using virt-install's command line
     options
+
+Package: virtinst
+Architecture: all
+Section: oldlibs
+Depends:
+ virt-install (>= ${source:Version}),
+ ${misc:Depends},
+Description: transitional dummy package for virt-install
+ This is a transitional package for migrating to virt-install.
+ .
+ It can safely be removed after the upgrade.

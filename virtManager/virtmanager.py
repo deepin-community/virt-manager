@@ -118,6 +118,27 @@ def drop_stdio():
     os.dup2(0, 2)
 
 
+def do_we_fork(options):
+    if options.debug or options.no_fork:
+        return False
+    if options.fork:
+        return True
+
+    key = "VIRT_MANAGER_DEFAULT_FORK"
+    val = os.environ.get(key, None)
+    if val == "yes":
+        log.debug("%s=%s, defaulting to --fork", key, val)
+        return True
+    if val == "no":  # pragma: no cover
+        log.debug("%s=%s, defaulting to --no-fork", key, val)
+        return False
+    if val:  # pragma: no cover
+        log.warning("Unknown %s=%s, expected 'yes' or 'no'", key, val)
+
+    # Default is `--no-fork`
+    return False
+
+
 def parse_commandline():
     epilog = ("Also accepts standard GTK arguments like --g-fatal-warnings")
     parser = argparse.ArgumentParser(usage="virt-manager [options]",
@@ -142,6 +163,8 @@ def parse_commandline():
         default=False)
     parser.add_argument("--no-fork", action="store_true",
         help="Don't fork into background on startup")
+    parser.add_argument("--fork", action="store_true",
+        help="Force fork into background on startup (this is the default)")
 
     parser.add_argument("--show-domain-creator", action="store_true",
         help="Show 'New VM' wizard")
@@ -155,6 +178,8 @@ def parse_commandline():
         help="Show domain delete window")
     parser.add_argument("--show-host-summary", action="store_true",
         help="Show connection details window")
+    parser.add_argument("--show-systray", action="store_true",
+        help="Launch virt-manager only in system tray")
 
     return parser.parse_known_args()
 
@@ -183,20 +208,22 @@ def main():
     # With F27 gnome+wayland we need to set these before GTK import
     os.environ["GSETTINGS_SCHEMA_DIR"] = BuildConfig.gsettings_dir
 
-    # Now we've got basic environment up & running we can fork
-    do_drop_stdio = False
-    if not options.no_fork and not options.debug:
-        drop_tty()
-        do_drop_stdio = True
+    # Force SSH to use askpass if a password is required,
+    # rather than possibly prompting on a terminal the user isn't looking at.
+    os.environ.setdefault("SSH_ASKPASS_REQUIRE", "force")
+    log.debug("Using SSH_ASKPASS_REQUIRE=%s",
+              os.environ["SSH_ASKPASS_REQUIRE"])
 
-        # Ignore SIGHUP, otherwise a serial console closing drops the whole app
-        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    # Now we've got basic environment up & running we can fork
+    do_fork = do_we_fork(options)
+    if do_fork:
+        drop_tty()
 
     leftovers = _import_gtk(leftovers)
     Gtk = globals()["Gtk"]
 
     # Do this after the Gtk import so the user has a chance of seeing any error
-    if do_drop_stdio:
+    if do_fork:
         drop_stdio()
 
     if leftovers:
@@ -240,12 +267,16 @@ def main():
     elif options.show_domain_delete:
         show_window = vmmEngine.CLI_SHOW_DOMAIN_DELETE
         domain = options.show_domain_delete
+    elif options.show_systray:
+        show_window = vmmEngine.CLI_SHOW_SYSTEM_TRAY
 
-    if show_window and options.uri is None:  # pragma: no cover
-        raise RuntimeError("can't use --show-* options without --connect")
+    if (show_window and show_window != vmmEngine.CLI_SHOW_SYSTEM_TRAY and
+        options.uri is None):  # pragma: no cover
+        raise RuntimeError("can't use --show-* options without --connect "
+                           "(except --show-systray)")
 
     skip_autostart = False
-    if show_window:
+    if show_window and show_window != vmmEngine.CLI_SHOW_SYSTEM_TRAY:
         skip_autostart = True
 
     # Hook libvirt events into glib main loop

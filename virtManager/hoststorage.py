@@ -406,9 +406,17 @@ class vmmHostStorage(vmmGObjectUI):
         vadj = self.widget("vol-scroll").get_vadjustment()
         vscroll_percent = vadj.get_value() // max(vadj.get_upper(), 1)
 
+        paths = []
         for vol in vols:
             try:
-                path = vol.get_target_path()
+                paths.append(vol.get_target_path())
+            except Exception:  # pragma: no cover
+                log.debug("Error getting target path for '%s'", vol, exc_info=True)
+                paths.append(None)
+        names_list = DeviceDisk.paths_in_use_by(pool.conn.get_backend(), paths)
+
+        for vol, path, names in zip(vols, paths, names_list):
+            try:
                 name = vol.get_pretty_name(pool.get_type())
                 cap = str(vol.get_capacity())
                 sizestr = vol.get_pretty_capacity()
@@ -421,14 +429,11 @@ class vmmHostStorage(vmmGObjectUI):
             namestr = None
             try:
                 if path:
-                    names = DeviceDisk.path_in_use_by(vol.conn.get_backend(),
-                                                       path)
                     namestr = ", ".join(names)
                     if not namestr:
                         namestr = None
             except Exception:  # pragma: no cover
-                log.exception("Failed to determine if storage volume in "
-                                  "use.")
+                log.exception("Failed to determine if storage volume in use.")
 
             sensitive = True
             if self._vol_sensitive_cb:

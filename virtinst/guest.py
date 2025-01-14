@@ -211,6 +211,8 @@ class Guest(XMLBuilder):
         self.skip_default_graphics = False
         self.skip_default_rng = False
         self.skip_default_tpm = False
+        self.skip_default_input = False
+        self.have_default_tpm = False
         self.x86_cpu_default = self.cpu.SPECIAL_MODE_APP_DEFAULT
 
         # qemu 6.1, fairly new when we added this option, has an unfortunate
@@ -219,7 +221,7 @@ class Guest(XMLBuilder):
         self.num_pcie_root_ports = 14
 
         self.skip_default_osinfo = False
-        self.uefi_requested = False
+        self.uefi_requested = None
         self.__osinfo = None
         self._capsinfo = None
         self._domcaps = None
@@ -352,7 +354,8 @@ class Guest(XMLBuilder):
         if (self.os.is_arm_machvirt() or
             self.os.is_riscv_virt() or
             self.os.is_s390x() or
-            self.os.is_pseries()):
+            self.os.is_pseries() or
+            self.os.is_loongarch64()):
             return True
 
         if not os_support:
@@ -499,8 +502,12 @@ class Guest(XMLBuilder):
 
     def add_device(self, dev):
         self.devices.add_child(dev)
+
     def remove_device(self, dev):
         self.devices.remove_child(dev)
+        self._remove_duplicate_console(dev)
+        self._remove_spice_devices(dev)
+
     devices = XMLChildProperty(_DomainDevices, is_single=True)
 
     def find_device(self, origdev):
@@ -541,7 +548,10 @@ class Guest(XMLBuilder):
             # and doesn't break QEMU internal snapshots
             prefer_efi = self.osinfo.requires_firmware_efi(self.os.arch)
         else:
-            prefer_efi = self.os.is_arm_machvirt() or self.conn.is_bhyve()
+            prefer_efi = (self.os.is_arm_machvirt() or
+                          self.os.is_riscv_virt() or
+                          self.os.is_loongarch64() or
+                          self.conn.is_bhyve())
 
         log.debug("Prefer EFI => %s", prefer_efi)
         return prefer_efi
@@ -590,6 +600,22 @@ class Guest(XMLBuilder):
         log.debug("Setting default UEFI path=%s", path)
         self.set_uefi_path(path)
 
+    def disable_uefi(self):
+        self.os.firmware = None
+        self.os.loader = None
+        self.os.loader_ro = None
+        self.os.loader_type = None
+        self.os.loader_secure = None
+        self.os.nvram = None
+        self.os.nvram_template = None
+        for feature in self.os.firmware_features:
+            self.os.remove_child(feature)
+
+        # Force remove any properties we don't know about
+        self._xmlstate.xmlapi.node_force_remove("./os/firmware")
+        self._xmlstate.xmlapi.node_force_remove("./os/nvram")
+        self._xmlstate.xmlapi.node_force_remove("./os/loader")
+
     def has_spice(self):
         for gfx in self.devices.graphics:
             if gfx.type == gfx.TYPE_SPICE:
@@ -630,9 +656,14 @@ class Guest(XMLBuilder):
 
     def lookup_domcaps(self):
         def _compare_machine(domcaps):
-            capsinfo = self.lookup_capsinfo()
             if self.os.machine == domcaps.machine:
                 return True
+            try:
+                capsinfo = self.lookup_capsinfo()
+            except Exception:
+                log.exception("Error fetching machine list for alias "
+                              "resolution, assuming mismatch")
+                return False
             if capsinfo.is_machine_alias(self.os.machine, domcaps.machine):
                 return True
             return False
@@ -738,7 +769,7 @@ class Guest(XMLBuilder):
             if original_machine_type.startswith(prefix):
                 self.os.machine = machine_alias
                 return
-        raise Exception("Don't know how to refresh machine type '%s'" %
+        raise RuntimeError("Don't know how to refresh machine type '%s'" %
                 original_machine_type)
 
     def set_smbios_serial_cloudinit(self):
@@ -775,6 +806,169 @@ class Guest(XMLBuilder):
                 self.vcpus = defCPUs
         self.cpu.set_topology_defaults(self.vcpus)
 
+    def change_graphics(self, val, inst):
+        inst.type = val
+        if val == "spice":
+            self._add_spice_devices()
+        else:
+            self._remove_spice_devices(inst)
+
+    def convert_to_q35(self, num_pcie_root_ports=None):
+        self.os.machine = "q35"
+
+        if num_pcie_root_ports is not None:
+            self.num_pcie_root_ports = int(num_pcie_root_ports)
+
+        for dev in self.devices.get_all():
+            if (dev.DEVICE_TYPE == "controller" and
+                dev.type in ["pci", "ide"]):
+                self.remove_device(dev)
+                continue
+
+            if (dev.DEVICE_TYPE == "sound" and
+                dev.model == "ich6"):
+                dev.model = "ich9"
+
+            if (dev.DEVICE_TYPE == "interface" and
+                dev.model == "e1000"):
+                dev.model = "e1000e"
+
+            if (dev.DEVICE_TYPE == "disk" and
+                dev.bus == "ide"):
+                dev.bus = "sata"
+                used_targets = [d.target for d in self.devices.disk if d.target]
+                dev.generate_target(used_targets)
+                dev.address.clear()
+
+            if dev.address.type == "pci":
+                dev.address.clear()
+
+        self.add_q35_pcie_controllers()
+
+    def _convert_spice_gl_to_egl_headless(self):
+        if not self.has_spice():
+            return
+
+        spicedev = [g for g in self.devices.graphics if g.type == "spice"][0]
+        if not spicedev.gl:
+            return
+
+        dev = DeviceGraphics(self.conn)
+        dev.type = "egl-headless"
+        dev.set_defaults(self.conn)
+        if spicedev.rendernode:
+            dev.rendernode = spicedev.rendernode
+        self.add_device(dev)
+
+    def _convert_to_vnc_graphics(self, agent):
+        """
+        If there's already VNC graphics configured, we leave it intact,
+        but rip out all evidence of other graphics devices.
+
+        If there's other non-VNC, non-egl-headless configured, we try to
+        inplace convert the first device we encounter.
+
+        If there's no graphics configured, set up a default VNC config.`
+        """
+        vnc_devs = [g for g in self.devices.graphics if g.type == "vnc"]
+        # We ignore egl-headless, it's not a true graphical frontend
+        other_devs = [g for g in self.devices.graphics if
+                      g.type != "vnc" and g.type != "egl-headless"]
+
+        # Guest already had a vnc device.
+        # Remove all other devs and we are done
+        if vnc_devs:
+            for g in other_devs:
+                self.remove_device(g)
+            return
+
+        # We didn't find any non-vnc device to convert.
+        # Add a vnc device with default config
+        if not other_devs:
+            dev = DeviceGraphics(self.conn)
+            dev.type = dev.TYPE_VNC
+            dev.set_defaults(self.conn)
+            self.add_device(dev)
+            return
+
+        # Convert the pre-existing graphics device to vnc
+        # Remove the rest
+        dev = other_devs.pop(0)
+        srcdev = DeviceGraphics(self.conn, dev.get_xml())
+        for g in other_devs:
+            self.remove_device(g)
+
+        dev.clear()
+        dev.type = dev.TYPE_VNC
+        dev.keymap = srcdev.keymap
+        dev.port = srcdev.port
+        dev.autoport = srcdev.autoport
+        dev.passwd = srcdev.passwd
+        dev.passwdValidTo = srcdev.passwdValidTo
+        dev.listen = srcdev.listen
+        for listen in srcdev.listens:
+            srcdev.remove_child(listen)
+            dev.add_child(listen)
+        dev.set_defaults(self)
+
+        if agent:
+            agent.source.clipboard_copypaste = srcdev.clipboard_copypaste
+            agent.source.mouse_mode = srcdev.mouse_mode
+
+    def _convert_to_vnc_video(self):
+        """
+        If there's no video device, add a default one.
+        If there's any qxl device, reset its config to app defaults.
+        """
+        if not self.devices.video:
+            videodev = DeviceVideo(self.conn)
+            videodev.set_defaults(self)
+            self.add_device(videodev)
+            return
+
+        qxl_devs = [v for v in self.devices.video if v.model == "qxl"]
+        if qxl_devs and not any(dev.primary for dev in self.devices.video):
+            # Make sure `primary` flag is set, we need it up ahead
+            self.devices.video[0].primary = True
+
+        for dev in qxl_devs:
+            is_primary = dev.primary
+            dev.clear()
+            dev.set_defaults(self)
+            if not is_primary and dev.model != "virtio":
+                # Device can't be non-primary, so just remove it
+                log.debug("Can't use model=%s for non-primary video device, "
+                          "removing it instead.", dev.model)
+                self.remove_device(dev)
+
+    def _add_qemu_vdagent(self):
+        if any(c for c in self.devices.channel if
+               c.type == c.TYPE_QEMUVDAGENT):
+            return
+
+        dev = DeviceChannel(self.conn)
+        dev.type = dev.TYPE_QEMUVDAGENT
+        dev.set_defaults(self)
+        self.add_device(dev)
+        return dev
+
+    def convert_to_vnc(self, qemu_vdagent=False):
+        """
+        Convert existing XML to have one VNC graphics connection.
+        """
+        self._convert_spice_gl_to_egl_headless()
+
+        # Rip out spice graphics devices unconditionally.
+        # Could be necessary if XML is in broken state.
+        self._force_remove_spice_devices()
+
+        agent = None
+        if qemu_vdagent:
+            agent = self._add_qemu_vdagent()
+
+        self._convert_to_vnc_graphics(agent)
+        self._convert_to_vnc_video()
+
     def set_defaults(self, _guest):
         self.set_capabilities_defaults()
 
@@ -808,8 +1002,8 @@ class Guest(XMLBuilder):
         for dev in self.devices.get_all():
             dev.set_defaults(self)
 
-        self._add_virtioscsi_controller()
-        self._add_q35_pcie_controllers()
+        self.add_virtioscsi_controller()
+        self.add_q35_pcie_controllers()
         self._add_spice_devices()
 
     def add_extra_drivers(self, extra_drivers):
@@ -860,6 +1054,9 @@ class Guest(XMLBuilder):
         return path
 
     def _set_default_uefi(self):
+        if self.uefi_requested is False:
+            return
+
         use_default_uefi = (self.prefers_uefi() and
             not self.os.kernel and
             not self.os.loader and
@@ -887,46 +1084,46 @@ class Guest(XMLBuilder):
         return all([c.model == "none" for c in controllers])
 
     def _add_default_input_device(self):
+        if self.skip_default_input:
+            return
         if self.os.is_container():
+            return
+        if self.os.is_xenpv():
             return
         if self.devices.input:
             return
         if not self.devices.graphics:
             return
-        if self._usb_disabled():
+
+        tablet = True
+        keyboard = True
+        if self.os.is_x86():
+            # We don't historically add USB keyboard for x86,
+            # default libvirt/qemu PS2 seems to be fine
+            keyboard = False
+
+        bus = None
+        if self.os.is_s390x():
+            # s390x guests need VirtIO input devices
+            if self.osinfo.supports_virtioinput(self._extra_drivers):
+                bus = "virtio"
+        elif not self._usb_disabled():
+            bus = "usb"
+
+        if not bus:
             return
 
-        usb_tablet = False
-        usb_keyboard = False
-        if self.os.is_x86() and not self.os.is_xenpv():
-            usb_tablet = True
-        if (self.os.is_arm_machvirt() or
-            self.os.is_riscv_virt() or
-            self.os.is_pseries()):
-            usb_tablet = True
-            usb_keyboard = True
-
-        if usb_tablet:
+        def _add_input(itype):
             dev = DeviceInput(self.conn)
-            dev.type = "tablet"
-            dev.bus = "usb"
-            self.add_device(dev)
-        if usb_keyboard:
-            dev = DeviceInput(self.conn)
-            dev.type = "keyboard"
-            dev.bus = "usb"
+            dev.type = itype
+            dev.bus = bus
+            dev.set_defaults(self)
             self.add_device(dev)
 
-        # s390x guests need VirtIO input devices
-        if self.os.is_s390x() and self.osinfo.supports_virtioinput(self._extra_drivers):
-            dev = DeviceInput(self.conn)
-            dev.type = "tablet"
-            dev.bus = "virtio"
-            self.add_device(dev)
-            dev = DeviceInput(self.conn)
-            dev.type = "keyboard"
-            dev.bus = "virtio"
-            self.add_device(dev)
+        if tablet:
+            _add_input("tablet")
+        if keyboard:
+            _add_input("keyboard")
 
     def _add_default_console_device(self):
         if self.skip_default_console:
@@ -984,7 +1181,10 @@ class Guest(XMLBuilder):
             # For pseries, we always assume OS supports usb3
             if qemu_usb3:
                 usb3 = True
-
+        elif self.os.is_loongarch64():
+            # For loongarch64, we always assume OS supports usb3
+            if qemu_usb3:
+                usb3 = True
 
         if usb2:
             for dev in DeviceController.get_usb2_controllers(self.conn):
@@ -1016,7 +1216,10 @@ class Guest(XMLBuilder):
         if self.os.is_container() and not self.conn.is_vz():
             return
         if (not self.os.is_x86() and
-            not self.os.is_pseries()):
+            not self.os.is_pseries() and
+            not self.os.is_loongarch64() and
+            not self.os.is_arm_machvirt() and
+            not self.os.is_riscv_virt()):
             return
         self.add_device(DeviceGraphics(self.conn))
 
@@ -1029,7 +1232,8 @@ class Guest(XMLBuilder):
                 self.os.is_arm_machvirt() or
                 self.os.is_riscv_virt() or
                 self.os.is_s390x() or
-                self.os.is_pseries()):
+                self.os.is_pseries() or
+                self.os.is_loongarch64()):
             return
 
         if (self.conn.is_qemu() and
@@ -1060,6 +1264,7 @@ class Guest(XMLBuilder):
         dev = DeviceTpm(self.conn)
         dev.type = DeviceTpm.TYPE_EMULATOR
         self.add_device(dev)
+        self.have_default_tpm = True
 
     def _add_default_memballoon(self):
         if self.devices.memballoon:
@@ -1074,7 +1279,8 @@ class Guest(XMLBuilder):
                 self.os.is_arm_machvirt() or
                 self.os.is_riscv_virt() or
                 self.os.is_s390x() or
-                self.os.is_pseries()):
+                self.os.is_pseries() or
+                self.os.is_loongarch64()):
             return
 
         if self.osinfo.supports_virtioballoon(self._extra_drivers):
@@ -1082,7 +1288,7 @@ class Guest(XMLBuilder):
             dev.model = "virtio"
             self.add_device(dev)
 
-    def _add_virtioscsi_controller(self):
+    def add_virtioscsi_controller(self):
         if not self.can_default_virtioscsi():
             return
         if not any([d for d in self.devices.disk if d.bus == "scsi"]):
@@ -1101,9 +1307,11 @@ class Guest(XMLBuilder):
             return True
         if self.os.is_riscv_virt():
             return True
+        if self.os.is_loongarch64():
+            return True
         return False
 
-    def _add_q35_pcie_controllers(self):
+    def add_q35_pcie_controllers(self):
         if any([c for c in self.devices.controller if c.type == "pci"]):
             return
         if not self.defaults_to_pcie():
@@ -1127,6 +1335,8 @@ class Guest(XMLBuilder):
             self.add_device(ctrl)
 
     def _add_spice_channels(self):
+        if not self.lookup_domcaps().supports_channel_spicevmc():
+            return  # pragma: no cover
         if self.skip_default_channel:
             return
         for chn in self.devices.channel:
@@ -1155,6 +1365,8 @@ class Guest(XMLBuilder):
         self.add_device(dev)
 
     def _add_spice_usbredir(self):
+        if not self.lookup_domcaps().supports_redirdev_usb():
+            return  # pragma: no cover
         if self.skip_default_usbredir:
             return
         if self.devices.redirdev:
@@ -1186,3 +1398,40 @@ class Guest(XMLBuilder):
         self._add_spice_channels()
         self._add_spice_sound()
         self._add_spice_usbredir()
+
+    def _remove_duplicate_console(self, dev):
+        condup = DeviceConsole.get_console_duplicate(self, dev)
+        if condup:
+            log.debug("Found duplicate console device:\n%s", condup.get_xml())
+            self.devices.remove_child(condup)
+
+    def _remove_spice_audio(self):
+        for audio in self.devices.audio:
+            if audio.type == "spice":
+                self.devices.remove_child(audio)
+
+    def _remove_spice_channels(self):
+        for channel in self.devices.channel:
+            if channel.type == DeviceChannel.TYPE_SPICEVMC:
+                self.devices.remove_child(channel)
+
+    def _remove_spice_usbredir(self):
+        for redirdev in self.devices.redirdev:
+            if redirdev.type == "spicevmc":
+                self.devices.remove_child(redirdev)
+
+    def _remove_spiceport(self):
+        for dev in self.devices.serial + self.devices.console:
+            if dev.type == dev.TYPE_SPICEPORT:
+                self.devices.remove_child(dev)
+
+    def _force_remove_spice_devices(self):
+        self._remove_spice_audio()
+        self._remove_spice_channels()
+        self._remove_spice_usbredir()
+        self._remove_spiceport()
+
+    def _remove_spice_devices(self, rmdev):
+        if rmdev.DEVICE_TYPE != "graphics" or self.has_spice():
+            return
+        self._force_remove_spice_devices()

@@ -102,6 +102,17 @@ class _CPUFeature(XMLBuilder):
     policy = XMLProperty("./@policy")
 
 
+class _CPUMaxphysaddr(XMLBuilder):
+    """
+    Class for generating XML for <cpu> child node <maxphysaddr>.
+    """
+    XML_NAME = "maxphysaddr"
+    _XML_PROP_ORDER = ["mode", "bits"]
+
+    mode = XMLProperty("./@mode")
+    bits = XMLProperty("./@bits", is_int=True)
+
+
 ##############
 # NUMA cells #
 ##############
@@ -211,7 +222,7 @@ class DomainCpu(XMLBuilder):
     _XML_PROP_ORDER = ["mode", "match", "check", "migratable",
             "model", "model_fallback", "model_vendor_id", "vendor",
             "topology", "cache", "features",
-            "cells", "latencies", "bandwidths"]
+            "cells", "latencies", "bandwidths", "maxphysaddr"]
 
 
     ##################
@@ -241,6 +252,8 @@ class DomainCpu(XMLBuilder):
     cells = XMLChildProperty(_NUMACell, relative_xpath="./numa")
     latencies = XMLChildProperty(_NUMALatency, relative_xpath="./numa/interconnects")
     bandwidths = XMLChildProperty(_NUMABandwidth, relative_xpath="./numa/interconnects")
+
+    maxphysaddr = XMLChildProperty(_CPUMaxphysaddr, is_single=True)
 
 
     #############################
@@ -437,9 +450,9 @@ class DomainCpu(XMLBuilder):
     def set_defaults(self, guest):
         if not self.conn.is_test() and not self.conn.is_qemu():
             return
-        if (self.get_xml().strip() or
-            self.special_mode_was_set):
-            # User already configured CPU
+        if self.special_mode_was_set:
+            return
+        if self.model or self.mode:
             return
 
         if guest.os.is_arm_machvirt() and guest.type == "kvm":
