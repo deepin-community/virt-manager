@@ -1,3 +1,10 @@
+virt-manager (1:4.1.0-2deepin1) unstable; urgency=medium
+
+  * Add loongarch cpu support
+    https://github.com/virt-manager/virt-manager/pull/629
+
+ -- Cryolitia <liziyao@uniontech.com>  Tue, 13 May 2025 17:05:21 +0800
+
 virt-manager (1:4.1.0-2) unstable; urgency=medium
 
   [ Stefano Rivera ]
