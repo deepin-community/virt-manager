@@ -4,8 +4,8 @@
 # This work is licensed under the GNU GPLv2 or later.
 # See the COPYING file in the top-level directory.
 
+import importlib
 import io
-import pkgutil
 import os
 import threading
 import time
@@ -79,7 +79,7 @@ def _pretty_memory(mem):
 ###########################################################
 
 def is_virt_bootstrap_installed(conn):
-    ret = pkgutil.find_loader('virtBootstrap') is not None
+    ret = importlib.util.find_spec('virtBootstrap') is not None
     return ret or conn.config.CLITestOptions.fake_virtbootstrap
 
 
@@ -1280,11 +1280,11 @@ class vmmCreateVM(vmmGObjectUI):
 
     def _browse_file(self, cbwidget, cb=None, is_media=False, is_dir=False):
         if is_media:
-            reason = self.config.CONFIG_DIR_ISO_MEDIA
+            reason = vmmStorageBrowser.REASON_ISO_MEDIA
         elif is_dir:
-            reason = self.config.CONFIG_DIR_FS
+            reason = vmmStorageBrowser.REASON_FS
         else:
-            reason = self.config.CONFIG_DIR_IMAGE
+            reason = vmmStorageBrowser.REASON_IMAGE
 
         if cb:
             callback = cb
@@ -2031,7 +2031,7 @@ class vmmCreateVM(vmmGObjectUI):
             # Probably means guest had no 'install' phase, as in
             # for live cds. Try to restart the domain.
             vm.startup()  # pragma: no cover
-        elif installer.has_install_phase():
+        elif installer.requires_postboot_xml_changes():
             # Register a status listener, which will restart the
             # guest after the install has finished
             def cb():
@@ -2090,12 +2090,12 @@ class vmmCreateVM(vmmGObjectUI):
         else:  # pragma: no cover
             import virtBootstrap  # pylint: disable=import-error
 
-        meter.start(_("Bootstraping container"), None)
+        meter.start(_("Bootstrapping container"), None)
         def progress_update_cb(prog):
             meter.start(_(prog['status']), None)
 
         asyncjob.details_enable()
-        # Use logging filter to show messages of the progreess on the GUI
+        # Use logging filter to show messages of the progress on the GUI
         class SetStateFilter(logging.Filter):
             def filter(self, record):
                 asyncjob.details_update("%s\n" % record.getMessage())

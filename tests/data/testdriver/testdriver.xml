@@ -296,24 +296,17 @@ Foo bar baz &amp; yeah boii &lt; &gt; yeahfoo
     </disk>
     <disk type='network' device='disk'>
       <driver name='qemu' type='raw'/>
-      <source protocol='sheepdog' name='image,with,commas'>
-        <host name='example.org' port='6000'/>
-      </source>
-      <target dev='vdad' bus='virtio'/>
-    </disk>
-    <disk type='network' device='disk'>
-      <driver name='qemu' type='raw'/>
       <source protocol='gluster' name='test-volume/test-gluster2.raw'>
         <host name='192.168.1.100'/>
       </source>
-      <target dev='vdae' bus='virtio'/>
+      <target dev='vdad' bus='virtio'/>
     </disk>
     <disk type='network' device='disk'>
       <driver name='qemu' type='raw'/>
       <source protocol='nbd'>
         <host transport='unix' socket='relative.sock'/>
       </source>
-      <target dev='vdaf' bus='virtio'/>
+      <target dev='vdae' bus='virtio'/>
     </disk>
 
     <!-- bus usb -->
@@ -362,7 +355,10 @@ Foo bar baz &amp; yeah boii &lt; &gt; yeahfoo
       <source network='dupmac'/>
       <mac address='22:22:33:54:32:11'/>
     </interface>
-    <interface type='user'/>
+    <interface type='network'>
+      <source network='plainbridge-portgroups' portgroup='sales'/>
+      <mac address='22:22:00:54:32:11'/>
+    </interface>
     <interface type='bridge'>
       <source bridge='brempty'/>
       <mac address='22:22:33:44:AA:BB'/>
@@ -599,6 +595,13 @@ Foo bar baz &amp; yeah boii &lt; &gt; yeahfoo
       <source file='/root/container.vmdk'/>
       <target dir='/home'/>
     </filesystem>
+    <filesystem type='mount'>
+      <driver type='virtiofs' queue='1024'/>
+      <source socket='/tmp/sock'/>
+      <target dir='tag'/>
+      <address type='pci' domain='0x0000' bus='0x00' slot='0x02' function='0x0'/>
+    </filesystem>
+
 
     <!-- tpm devices -->
     <tpm model='tpm-tis'>
@@ -715,7 +718,15 @@ test-many-devices, like an alternate RNG, EOL OS ID, title field
   <vcpu>2</vcpu>
   <cpu mode='host-model'/>
   <os firmware='efi'>
+    <firmware>
+      <feature enabled='yes' name='enrolled-keys'/>
+      <feature enabled='yes' name='secure-boot'/>
+    </firmware>
     <type arch='i686'>hvm</type>
+    <loader format="qcow2" readonly='yes' secure='yes' type='pflash'>/usr/share/edk2/ovmf/OVMF_CODE.secboot.fd.qcow2</loader>
+    <nvram type='file' format='qcow2' template='/usr/share/OVMF/OVMF_VARS.fd.qcow2'>
+      <source file='/var/lib/libvirt/nvram/guest_VARS.fd'/>
+    </nvram>
     <boot dev='hd'/>
   </os>
   <clock offset='utc'/>
@@ -1598,9 +1609,9 @@ ba</description>
 <pool type='dir'>
   <name>pool-dir</name>
   <uuid>35bb2ad9-388a-cdfe-461a-b8907f6e53fe</uuid>
-  <capacity>107374182400</capacity>
+  <capacity unit='TiB'>32</capacity>
   <allocation>0</allocation>
-  <available>107374182400</available>
+  <available unit='TiB'>32</available>
   <source>
   </source>
   <target>
@@ -2159,35 +2170,6 @@ ba</description>
     <target>
       <path>rbd-sourcename/some-rbd-vol</path>
       <format type='raw'/>
-    </target>
-  </volume>
-</pool>
-
-
-<pool type='sheepdog'>
-  <name>pool-sheepdog</name>
-  <uuid>581381f8-a13f-4f7c-89b5-9c9b71c64834</uuid>
-  <capacity unit='bytes'>107374182400</capacity>
-  <allocation unit='bytes'>53687091200</allocation>
-  <available unit='bytes'>53687091200</available>
-  <source>
-    <host name='localhost' port='7000'/>
-    <name>mysheeppool</name>
-  </source>
-
-  <volume type='network'>
-    <name>vol_sheepdog</name>
-    <key>sheep/vol_sheepdog</key>
-    <capacity unit='bytes'>1024</capacity>
-    <allocation unit='bytes'>0</allocation>
-    <target>
-      <path>sheepdog:vol_sheepdog</path>
-      <format type='unknown'/>
-      <permissions>
-        <mode>0600</mode>
-        <owner>-1</owner>
-        <group>-1</group>
-      </permissions>
     </target>
   </volume>
 </pool>
@@ -3614,6 +3596,23 @@ ba</description>
   </capability>
 </device>
 <!-- End duplicate USB devices -->
+
+<device>
+  <name>pci_0000_00_09_0</name>
+  <path>/sys/devices/pci0000:00/0000:00:09.0</path>
+  <parent>computer</parent>
+  <driver>
+    <name>i915</name>
+  </driver>
+  <capability type='pci'>
+    <domain>0</domain>
+    <bus>0</bus>
+    <slot>9</slot>
+    <function>0</function>
+    <product id='0x191b'>HD Graphics 530</product>
+    <vendor id='0x8086'>Intel Corporation</vendor>
+  </capability>
+</device>
 
 <device>
   <name>pci_0000_00_02_0</name>

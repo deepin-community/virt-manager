@@ -34,8 +34,19 @@ from ..baseclass import vmmGObject
 # VNC/Spice abstraction handling #
 ##################################
 
+_GTKVNC_SUPPORT_CACHE = {}
+
+
+def _gtkvnc_check_display_support(funcname):
+    if funcname not in _GTKVNC_SUPPORT_CACHE:
+        val = hasattr(GtkVnc.Display, funcname)
+        log.debug("GtkVnc.Display %s support=%s", funcname, val)
+        _GTKVNC_SUPPORT_CACHE[funcname] = val
+    return _GTKVNC_SUPPORT_CACHE[funcname]
+
+
 def _gtkvnc_supports_resizeguest():
-    return hasattr(GtkVnc.Display, "set_allow_resize")
+    return _gtkvnc_check_display_support("set_allow_resize")
 
 
 class Viewer(vmmGObject):
@@ -45,6 +56,7 @@ class Viewer(vmmGObject):
     __gsignals__ = {
         "add-display-widget": (vmmGObject.RUN_FIRST, None, [object]),
         "size-allocate": (vmmGObject.RUN_FIRST, None, [object]),
+        "desktop-resolution-changed": (vmmGObject.RUN_FIRST, None, []),
         "pointer-grab": (vmmGObject.RUN_FIRST, None, []),
         "pointer-ungrab": (vmmGObject.RUN_FIRST, None, []),
         "keyboard-grab": (vmmGObject.RUN_FIRST, None, []),
@@ -64,14 +76,13 @@ class Viewer(vmmGObject):
         self._ginfo = ginfo
         self._tunnels = SSHTunnels(self._ginfo)
         self._keyboard_grab = False
+        self._desktop_resolution = (0, 0)
 
         self.add_gsettings_handle(
             self.config.on_keys_combination_changed(self._refresh_grab_keys))
 
-        self.connect("add-display-widget", self._common_init)
-
     def _cleanup(self):
-        self.close()
+        self._close()
 
         if self._display:
             self._display.destroy()
@@ -95,12 +106,19 @@ class Viewer(vmmGObject):
             self.emit(new_signal, *args, **kwargs)
         return _proxy_signal
 
-    def _common_init(self, ignore1, ignore2):
+    def _set_display(self, display):
+        self._display = display
         self._refresh_grab_keys()
 
         self._display.connect("size-allocate",
             self._make_signal_proxy("size-allocate"))
 
+        self.emit("add-display-widget", self._display)
+        self._display.realize()
+
+        self._connect_display_signals()
+
+        self._display.show()
 
 
     #########################
@@ -110,10 +128,6 @@ class Viewer(vmmGObject):
     def _grab_focus(self):
         if self._display:
             self._display.grab_focus()
-    def _set_size_request(self, *args, **kwargs):
-        return self._display.set_size_request(*args, **kwargs)
-    def _size_allocate(self, *args, **kwargs):
-        return self._display.size_allocate(*args, **kwargs)
 
     def _get_pixbuf(self):
         return self._display.get_pixbuf()
@@ -134,7 +148,7 @@ class Viewer(vmmGObject):
         if not self._vm.conn.support.domain_open_graphics():
             return None
 
-        return self._vm.open_graphics_fd()
+        return self._vm.open_graphics_fd(self._ginfo.gidx)
 
     def _open(self):
         if self._ginfo.bad_config():
@@ -149,19 +163,56 @@ class Viewer(vmmGObject):
     def _get_grab_keys(self):
         return self._display.get_grab_keys().as_string()
 
+    def _refresh_grab_keys(self):
+        if not self._display:
+            return  # pragma: no cover
+
+        try:
+            keys = self.config.get_keys_combination()
+            if not keys:
+                return  # pragma: no cover
+
+            try:
+                keys = [int(k) for k in keys.split(',')]
+            except Exception:  # pragma: no cover
+                log.debug("Error in grab_keys configuration in Gsettings",
+                              exc_info=True)
+                return
+
+            self._set_grab_keys(keys)
+        except Exception as e:  # pragma: no cover
+            log.debug("Error when getting the grab keys combination: %s",
+                          str(e))
+
     def _emit_disconnected(self, errdetails=None):
         ssherr = self._tunnels.get_err_output()
         self.emit("disconnected", errdetails, ssherr)
+
+    def _set_desktop_resolution(self, w, h):
+        if w == 0 or h == 0:
+            return  # pragma: no cover
+
+        origres = self._desktop_resolution
+        newres = (w, h)
+        if origres == newres:
+            return  # pragma: no cover
+
+        log.debug("vm=%s resolution changed: orig=%s new=%s",
+                  self._vm.get_name(), origres, newres)
+        self._desktop_resolution = newres
+        self.emit("desktop-resolution-changed")
 
 
     #######################################################
     # Internal API that will be overwritten by subclasses #
     #######################################################
 
-    def close(self):
+    def _close(self):
         raise NotImplementedError()
 
     def _is_open(self):
+        raise NotImplementedError()
+    def _connect_display_signals(self):
         raise NotImplementedError()
 
     def _set_username(self, cred):
@@ -172,15 +223,12 @@ class Viewer(vmmGObject):
     def _send_keys(self, keys):
         raise NotImplementedError()
 
-    def _refresh_grab_keys(self):
+    def _set_grab_keys(self, keys):
         raise NotImplementedError()
 
     def _open_host(self):
         raise NotImplementedError()
     def _open_fd(self, fd):
-        raise NotImplementedError()
-
-    def _get_desktop_resolution(self):
         raise NotImplementedError()
 
     def _get_scaling(self):
@@ -200,6 +248,9 @@ class Viewer(vmmGObject):
     def _has_usb_redirection(self):
         raise NotImplementedError()
 
+    def _get_preferred_size(self):
+        raise NotImplementedError()
+
 
     ####################################
     # APIs accessed by vmmConsolePages #
@@ -212,10 +263,6 @@ class Viewer(vmmGObject):
         return self._grab_focus()
     def console_has_keyboard_grab(self):
         return bool(self._display and self._keyboard_grab)
-    def console_set_size_request(self, *args, **kwargs):
-        return self._set_size_request(*args, **kwargs)
-    def console_size_allocate(self, *args, **kwargs):
-        return self._size_allocate(*args, **kwargs)
 
     def console_get_pixbuf(self):
         return self._get_pixbuf()
@@ -234,23 +281,12 @@ class Viewer(vmmGObject):
     def console_get_grab_keys(self):
         return self._get_grab_keys()
 
-    def console_get_desktop_resolution(self):
-        ret = self._get_desktop_resolution()
-        if not ret:
-            return ret  # pragma: no cover
+    def console_get_preferred_size(self):
+        return self._get_preferred_size()
 
-        # Don't pass on bogus resolutions
-        if (ret[0] == 0) or (ret[1] == 0):
-            return None
-        return ret
-
-    def console_get_scaling(self):
-        return self._get_scaling()
     def console_set_scaling(self, val):
         return self._set_scaling(val)
 
-    def console_get_resizeguest(self):
-        return self._get_resizeguest()
     def console_set_resizeguest(self, val):
         return self._set_resizeguest(val)
     def console_get_resizeguest_warning(self):
@@ -273,26 +309,12 @@ class Viewer(vmmGObject):
 class VNCViewer(Viewer):
     viewer_type = "vnc"
 
-    def __init__(self, *args, **kwargs):
-        Viewer.__init__(self, *args, **kwargs)
-        self._display = None
-        self._desktop_resolution = None
-
 
     ###################
     # Private helpers #
     ###################
 
-    def _init_widget(self):
-        self._display = GtkVnc.Display()
-
-        # Make sure viewer doesn't force resize itself
-        self._display.set_force_size(False)
-        self._display.set_pointer_grab(True)
-
-        self.emit("add-display-widget", self._display)
-        self._display.realize()
-
+    def _connect_display_signals(self):
         self._display.connect("vnc-pointer-grab",
             self._make_signal_proxy("pointer-grab"))
         self._display.connect("vnc-pointer-ungrab",
@@ -304,9 +326,17 @@ class VNCViewer(Viewer):
         self._display.connect("vnc-auth-failure", self._auth_failure_cb)
         self._display.connect("vnc-initialized", self._connected_cb)
         self._display.connect("vnc-disconnected", self._disconnected_cb)
-        self._display.connect("vnc-desktop-resize", self._desktop_resize)
+        self._display.connect("vnc-desktop-resize", self._desktop_resize_cb)
 
-        self._display.show()
+    def _init_display(self):
+        display = GtkVnc.Display()
+
+        display.set_pointer_grab(True)
+
+        if _gtkvnc_check_display_support("set_keep_aspect_ratio"):
+            display.set_keep_aspect_ratio(True)
+
+        self._set_display(display)
 
     def _keyboard_grab_cb(self, src):
         self._keyboard_grab = True
@@ -324,10 +354,8 @@ class VNCViewer(Viewer):
         self._tunnels.unlock()
         self._emit_disconnected()
 
-    def _desktop_resize(self, src_ignore, w, h):
-        self._desktop_resolution = (w, h)
-        # Queue a resize
-        self.emit("size-allocate", None)
+    def _desktop_resize_cb(self, src, w, h):
+        self._set_desktop_resolution(w, h)
 
     def _auth_failure_cb(self, ignore, msg):
         log.debug("VNC auth failure. msg=%s", msg)
@@ -362,12 +390,16 @@ class VNCViewer(Viewer):
         if withUsername or withPassword:
             self.emit("need-auth", withPassword, withUsername)
 
+    def _sync_force_size(self):
+        force_size = not self._get_scaling() and not self._get_resizeguest()
+        self._display.set_force_size(force_size)
+
 
     ###############################
     # Private API implementations #
     ###############################
 
-    def close(self):
+    def _close(self):
         self._display.close()
 
     def _is_open(self):
@@ -378,38 +410,15 @@ class VNCViewer(Viewer):
             return self._display.get_scaling()
     def _set_scaling(self, scaling):
         if self._display:
-            return self._display.set_scaling(scaling)
+            self._display.set_scaling(scaling)
+            self._sync_force_size()
 
-    def _get_grab_keys(self):
-        return self._display.get_grab_keys().as_string()
-
-    def _refresh_grab_keys(self):
-        if not self._display:
-            return  # pragma: no cover
-
-        try:
-            keys = self.config.get_keys_combination()
-            if not keys:
-                return  # pragma: no cover
-
-            try:
-                keys = [int(k) for k in keys.split(',')]
-            except Exception:  # pragma: no cover
-                log.debug("Error in grab_keys configuration in Gsettings",
-                              exc_info=True)
-                return
-
-            seq = GtkVnc.GrabSequence.new(keys)
-            self._display.set_grab_keys(seq)
-        except Exception as e:  # pragma: no cover
-            log.debug("Error when getting the grab keys combination: %s",
-                          str(e))
+    def _set_grab_keys(self, keys):
+        seq = GtkVnc.GrabSequence.new(keys)
+        self._display.set_grab_keys(seq)
 
     def _send_keys(self, keys):
         return self._display.send_keys([Gdk.keyval_from_name(k) for k in keys])
-
-    def _get_desktop_resolution(self):
-        return self._desktop_resolution
 
     def _set_username(self, cred):
         self._display.set_credential(GtkVnc.DisplayCredential.USERNAME, cred)
@@ -419,6 +428,7 @@ class VNCViewer(Viewer):
     def _set_resizeguest(self, val):
         if _gtkvnc_supports_resizeguest():
             self._display.set_allow_resize(val)  # pylint: disable=no-member
+            self._sync_force_size()
     def _get_resizeguest(self):
         if _gtkvnc_supports_resizeguest():
             return self._display.get_allow_resize()  # pylint: disable=no-member
@@ -432,13 +442,16 @@ class VNCViewer(Viewer):
     def _has_usb_redirection(self):
         return False
 
+    def _get_preferred_size(self):
+        return self._desktop_resolution
+
 
     #######################
     # Connection routines #
     #######################
 
     def _open(self):
-        self._init_widget()
+        self._init_display()
         return Viewer._open(self)
 
     def _open_host(self):
@@ -491,7 +504,6 @@ class SpiceViewer(Viewer):
         self._display = None
         self._audio = None
         self._main_channel = None
-        self._display_channel = None
         self._usbdev_manager = None
         self._channels = set()
 
@@ -513,14 +525,9 @@ class SpiceViewer(Viewer):
         else:
             self.emit("keyboard-ungrab")
 
-    def _init_widget(self):
-        self.emit("add-display-widget", self._display)
-        self._display.realize()
-
+    def _connect_display_signals(self):
         self._display.connect("mouse-grab", self._mouse_grab_cb)
         self._display.connect("keyboard-grab", self._keyboard_grab_cb)
-
-        self._display.show()
 
     def _create_spice_session(self):
         self._spice_session = SpiceClientGLib.Session()
@@ -618,18 +625,21 @@ class SpiceViewer(Viewer):
                 self._main_channel, "notify::agent-connected",
                 self._agent_connected_cb)
 
-        elif (type(channel) == SpiceClientGLib.DisplayChannel and
-                not self._display):
+        elif (isinstance(channel, SpiceClientGLib.DisplayChannel) and
+              not self._display):
             channel_id = channel.get_property("channel-id")
 
             if channel_id != 0:  # pragma: no cover
                 log.debug("Spice multi-head unsupported")
                 return
 
-            self._display_channel = channel
-            self._display = SpiceClientGtk.Display.new(self._spice_session,
-                                                      channel_id)
-            self._init_widget()
+            display = SpiceClientGtk.Display.new(
+                    self._spice_session, channel_id)
+            self._set_display(display)
+
+            _SIGS.connect_after(
+                channel, "display-primary-create",
+                self._display_primary_create_cb)
             self.emit("connected")
 
         elif (type(channel) in [SpiceClientGLib.PlaybackChannel,
@@ -643,21 +653,20 @@ class SpiceViewer(Viewer):
     def _agent_connected_cb(self, src, val):
         self.emit("agent-connected")  # pragma: no cover
 
+    def _display_primary_create_cb(self, *args):
+        self._set_desktop_resolution(args[2], args[3])
+
 
     ################################
     # Internal API implementations #
     ################################
 
-    def close(self):
+    def _close(self):
         if self._spice_session is not None:
             _SIGS.disconnect_obj_signals(self._spice_session)
             self._spice_session.disconnect()
         self._spice_session = None
         self._audio = None
-        if self._display:
-            self._display.destroy()
-        self._display = None
-        self._display_channel = None
 
         for channel in self._channels:
             _SIGS.disconnect_obj_signals(channel)
@@ -671,42 +680,18 @@ class SpiceViewer(Viewer):
     def _is_open(self):
         return self._spice_session is not None
 
-    def _refresh_grab_keys(self):
-        if not self._display:
-            return  # pragma: no cover
-
-        try:
-            keys = self.config.get_keys_combination()
-            if not keys:
-                return  # pragma: no cover
-
-            try:
-                keys = [int(k) for k in keys.split(',')]
-            except Exception:  # pragma: no cover
-                log.debug("Error in grab_keys configuration in Gsettings",
-                              exc_info=True)
-                return
-
-            seq = SpiceClientGtk.GrabSequence.new(keys)
-            self._display.set_grab_keys(seq)
-        except Exception as e:  # pragma: no cover
-            log.debug("Error when getting the grab keys combination: %s",
-                          str(e))
+    def _set_grab_keys(self, keys):
+        seq = SpiceClientGtk.GrabSequence.new(keys)
+        self._display.set_grab_keys(seq)
 
     def _send_keys(self, keys):
         return self._display.send_keys([Gdk.keyval_from_name(k) for k in keys],
                                       SpiceClientGtk.DisplayKeyEvent.CLICK)
 
-    def _get_desktop_resolution(self):
-        if not self._display_channel:
-            return None  # pragma: no cover
-        return self._display_channel.get_properties("width", "height")
-
     def _has_agent(self):
         if not self._main_channel:
             return False  # pragma: no cover
-        return (self._main_channel.get_property("agent-connected") or
-                self.config.CLITestOptions.spice_agent)
+        return self._main_channel.get_property("agent-connected")
 
     def _open_host(self):
         host, port, tlsport = self._ginfo.get_conn_host()
@@ -772,8 +757,17 @@ class SpiceViewer(Viewer):
     def _has_usb_redirection(self):
         if not self._spice_session or not self._usbdev_manager:
             return False  # pragma: no cover
+        return True
 
-        for c in self._spice_session.get_channels():
-            if c.__class__ is SpiceClientGLib.UsbredirChannel:
-                return True
-        return False
+    def _get_preferred_size(self):
+        if (not self._display or
+            self._get_scaling() or
+            self._get_resizeguest()):
+            return self._desktop_resolution
+
+        # When scaling and resizeguest disabled, this usually matches the
+        # VM resolution. But when host desktop scaling is used, spice will
+        # intentionally have different values here.
+        w = self._display.get_preferred_width()[1]
+        h = self._display.get_preferred_height()[1]
+        return (w, h)

@@ -2,10 +2,12 @@
 # See the COPYING file in the top-level directory.
 
 import os
+import tempfile
 
 import libvirt
 import pytest
 
+import virtinst
 from virtinst import log
 
 import tests
@@ -40,13 +42,34 @@ def _vm_wrapper(vmname, uri="qemu:///system", opts=None):
                 try:
                     flags = 0
                     if "qemu" in uri:
-                        flags = libvirt.VIR_DOMAIN_UNDEFINE_NVRAM
+                        flags = (libvirt.VIR_DOMAIN_UNDEFINE_NVRAM |
+                                 libvirt.VIR_DOMAIN_UNDEFINE_SNAPSHOTS_METADATA)
                     dom.undefineFlags(flags)
                     dom.destroy()
                 except Exception:
                     pass
         return wrapper
     return wrap1
+
+
+def _create_qcow2_file(fn):
+    def wrapper(app, *args, **kwargs):
+        tmpdir = tempfile.TemporaryDirectory(prefix="uitests-tmp")
+        dname = tmpdir.name
+        try:
+            fname = os.path.join(dname, "test.img")
+            os.system("qemu-img create -f qcow2 %s 1M > /dev/null" % fname)
+            os.system("chmod 700 %s" % dname)
+            fn(fname, app, *args, **kwargs)
+        finally:
+            poolname = os.path.basename(dname)
+            try:
+                pool = app.conn.storagePoolLookupByName(poolname)
+                pool.destroy()
+                pool.undefine()
+            except Exception:
+                log.debug("Error cleaning up pool", exc_info=True)
+    return wrapper
 
 
 def _destroy(app, win):
@@ -90,6 +113,10 @@ def _checkConsoleStandard(app, dom):
     # 'Resize to VM' testing
     oldsize = win.size
     win.find("^View$", "menu").click()
+    scalemenu = win.find("Scale Display", "menu")
+    scalemenu.point()
+    scalemenu.find("Never", "radio menu item").click()
+    win.find("^View$", "menu").click()
     win.find("Resize to VM", "menu item").click()
     newsize = win.size
     lib.utils.check(lambda: oldsize != newsize)
@@ -129,15 +156,18 @@ def _checkConsoleStandard(app, dom):
     win.find("^View$", "menu").click()
     scalemenu = win.find("Scale Display", "menu")
     scalemenu.point()
-    scalemenu.find("Always", "radio menu item").click()
-    win.find("^View$", "menu").click()
-    scalemenu = win.find("Scale Display", "menu")
-    scalemenu.point()
-    scalemenu.find("Never", "radio menu item").click()
-    win.find("^View$", "menu").click()
-    scalemenu = win.find("Scale Display", "menu")
-    scalemenu.point()
     scalemenu.find("Only", "radio menu item").click()
+    win.find("^View$", "menu").click()
+    scalemenu = win.find("Scale Display", "menu")
+    scalemenu.point()
+    scalemenu.find("Always", "radio menu item").click()
+
+    # 'Resize to VM' again, to hit the scaling->always case
+    oldsize = win.size
+    win.find("^View$", "menu").click()
+    win.find("Resize to VM", "menu item").click()
+    newsize = win.size
+    lib.utils.check(lambda: oldsize != newsize)
 
     win.window_close()
 
@@ -283,11 +313,10 @@ def testConsoleVNCSocket(app, dom):
     lib.utils.check(lambda: con.showing)
 
 
-@_vm_wrapper("uitests-spice-standard")
-def testConsoleAutoconnect(app, dom):
+def _testConsoleAutoconnect(app, dom, wname):
     ignore = dom
     win = app.topwin
-    con = win.find("console-gfx-viewport")
+    con = win.find(wname)
     lib.utils.check(lambda: con.showing)
 
     # Disable autoconnect
@@ -304,6 +333,16 @@ def testConsoleAutoconnect(app, dom):
     lib.utils.check(lambda: not con.showing)
     button.click()
     lib.utils.check(lambda: con.showing)
+
+
+@_vm_wrapper("uitests-spice-standard")
+def testConsoleAutoconnectGraphics(app, dom):
+    _testConsoleAutoconnect(app, dom, "console-gfx-viewport")
+
+
+@_vm_wrapper("uitests-lxc-serial", uri="lxc:///")
+def testConsoleAutoconnectSerial(app, dom):
+    _testConsoleAutoconnect(app, dom, "Serial Terminal")
 
 
 @_vm_wrapper("uitests-lxc-serial", uri="lxc:///")
@@ -330,18 +369,8 @@ def testConsoleLXCSerial(app, dom):
     win.find("Details", "radio button").click()
     win.find("Console", "radio button").click()
     _destroy(app, win)
-    view = app.root.find("^View$", "menu")
-    view.click()
-    # Triggers some tooltip cases
-    textmenu = view.find("Consoles", "menu")
-    textmenu.point()
-    lib.utils.check(lambda: textmenu.showing)
-    app.sleep(.5)  # give console menu time to dynamically populate
-    item = textmenu.find("Text Console 1")
-    lib.utils.check(lambda: not item.sensitive)
 
     # Restart the guest to trigger reconnect code
-    view.click()
     win.find("Run", "push button").click()
     term = win.find("Serial Terminal")
     lib.utils.check(lambda: term.showing)
@@ -359,9 +388,7 @@ def testConsoleLXCSerial(app, dom):
     lib.utils.check(lambda: not win.showing)
 
 
-@_vm_wrapper("uitests-spice-specific",
-        opts=["--test-options=spice-agent",
-              "--test-options=fake-console-resolution"])
+@_vm_wrapper("uitests-spice-specific")
 def testConsoleSpiceSpecific(app, dom):
     """
     Spice specific behavior. Has lots of devices that will open
@@ -430,7 +457,14 @@ def testVNCSpecific(app, dom):
     win.click_title()
 
 
-def _testLiveHotplug(app, fname):
+@_vm_wrapper("uitests-hotplug")
+@_create_qcow2_file
+def testLiveHotplug(fname, app, dom):
+    """
+    Live test for basic hotplugging and media change, as well as
+    testing our auto-poolify magic
+    """
+    ignore = dom
     win = app.topwin
     win.find("Details", "radio button").click()
 
@@ -471,37 +505,78 @@ def _testLiveHotplug(app, fname):
     lib.utils.check(lambda: tab.showing)
     entry.set_text(fname)
     appl.click()
+
     lib.utils.check(lambda: not appl.sensitive)
     lib.utils.check(lambda: entry.text == fname)
     entry.click_secondary_icon()
+
     appl.click()
     lib.utils.check(lambda: not appl.sensitive)
     lib.utils.check(lambda: not entry.text)
 
 
+
 @_vm_wrapper("uitests-hotplug")
-def testLiveHotplug(app, dom):
-    """
-    Live test for basic hotplugging and media change, as well as
-    testing our auto-poolify magic
-    """
-    ignore = dom
-    import tempfile
-    tmpdir = tempfile.TemporaryDirectory(prefix="uitests-tmp")
-    dname = tmpdir.name
-    try:
-        fname = os.path.join(dname, "test.img")
-        os.system("qemu-img create -f qcow2 %s 1M > /dev/null" % fname)
-        os.system("chmod 700 %s" % dname)
-        _testLiveHotplug(app, fname)
-    finally:
-        poolname = os.path.basename(dname)
-        try:
-            pool = app.conn.storagePoolLookupByName(poolname)
-            pool.destroy()
-            pool.undefine()
-        except Exception:
-            log.debug("Error cleaning up pool", exc_info=True)
+@_create_qcow2_file
+def testLiveExternalSnapshots(fname, app, dom):
+    win = app.topwin
+    win.find("Details", "radio button").click()
+
+    # Add a scsi disk, importing the passed path
+    win.find("add-hardware", "push button").click()
+    addhw = app.find_window("Add New Virtual Hardware")
+    addhw.find("Storage", "table cell").click()
+    tab = addhw.find("storage-tab", None)
+    lib.utils.check(lambda: tab.showing)
+    tab.find("Select or create", "radio button").click()
+    tab.find("storage-entry").set_text(fname)
+    tab.combo_select("Bus type:", "SCSI")
+    addhw.find("Finish", "push button").click()
+
+    # Verify permission dialog pops up, ask to change
+    app.click_alert_button(
+            "The emulator may not have search permissions", "Yes")
+
+    # Verify no errors
+    lib.utils.check(lambda: not addhw.showing)
+    lib.utils.check(lambda: win.active)
+
+    def _make_snapshot(name, auto=True):
+        win.find("snapshot-add", "push button").click()
+        newwin = app.find_window("Create snapshot")
+        newwin.find("Name:", "text").set_text(name)
+        external = newwin.find("external", "radio button")
+        if not external.isChecked:
+            pytest.skip("libvirt is too old for external snapshots")
+        if not auto:
+            newwin.find("auto", "check box").click()
+        newwin.find("Finish", "push button").click()
+        lib.utils.check(lambda: not newwin.showing)
+        newc = win.find(name, "table cell")
+        lib.utils.check(lambda: newc.state_selected)
+
+    win.find("Snapshots", "radio button").click()
+    _make_snapshot("testnewsnap1")
+    _make_snapshot("testnewsnap2", auto=False)
+
+    # Poweroff VM and create an offline one
+    run = win.find("Run", "push button")
+    dom.destroy()
+    lib.utils.check(lambda: run.sensitive)
+
+    _make_snapshot("testnewsnap-offline")
+
+    # Delete first snapshot
+    newc = win.find("testnewsnap1", "table cell")
+    newc.click()
+    lib.utils.check(lambda: newc.state_selected)
+    win.find("snapshot-delete").click()
+    app.click_alert_button("permanently delete", "Yes")
+    lib.utils.check(lambda: newc.dead, timeout=10)
+    lib.utils.check(lambda: win.active)
+
+    # Ensure VM is still offline
+    lib.utils.check(lambda: run.sensitive)
 
 
 @_vm_wrapper("uitests-firmware-efi")
@@ -513,17 +588,20 @@ def testFirmwareRename(app, dom):
     # First we refresh the 'nvram' pool, so we can reliably
     # check if nvram files are created/deleted as expected
     conn = cli.getConnection(app.conn.getURI())
+    guest = virtinst.Guest(conn, dom.XMLDesc(0))
     origname = dom.name()
-    nvramdir = conn.get_libvirt_data_root_dir() + "/qemu/nvram"
+    origpath = guest.os.nvram
+    if not origpath:
+        pytest.skip("libvirt is too old to put nvram path in inactive XML")
+    nvramdir = os.path.dirname(origpath)
 
     fakedisk = DeviceDisk(conn)
     fakedisk.set_source_path(nvramdir + "/FAKE-UITEST-FILE")
     nvram_pool = fakedisk.get_parent_pool()
     nvram_pool.refresh()
 
-    origpath = "%s/%s_VARS.fd" % (nvramdir, origname)
     newname = "uitests-firmware-efi-renamed"
-    newpath = "%s/%s_VARS.fd" % (nvramdir, newname)
+    newpath = origpath.replace(origname + "_VARS", newname + "_VARS")
     assert DeviceDisk.path_definitely_exists(app.conn, origpath)
     assert not DeviceDisk.path_definitely_exists(app.conn, newpath)
 

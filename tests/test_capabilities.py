@@ -51,6 +51,13 @@ def testCapsUtilFuncs():
         caps_empty.guest_lookup()
 
 
+def testGuestCapabilities():
+    filename = "kvm-x86_64.xml"
+    caps = _buildCaps(filename)
+
+    assert caps.guests[0].supports_externalSnapshot() is True
+
+
 ##############################
 # domcapabilities.py testing #
 ##############################
@@ -92,6 +99,8 @@ def testDomainCapabilitiesx86():
 
     assert caps.supports_filesystem_virtiofs()
     assert caps.supports_memorybacking_memfd()
+    assert caps.supports_redirdev_usb()
+    assert caps.supports_channel_spicevmc()
 
     xml = open(DATADIR + "/kvm-x86_64-domcaps-amd-sev.xml").read()
     caps = DomainCapabilities(utils.URIs.open_testdriver_cached(), xml)
@@ -103,6 +112,88 @@ def testDomainCapabilitiesAArch64():
     caps = DomainCapabilities(utils.URIs.open_testdriver_cached(), xml)
 
     assert "Default" in caps.label_for_firmware_path(None)
+    assert "Custom:" in caps.label_for_firmware_path("/foobar")
+    assert "UEFI" in caps.label_for_firmware_path("aarch64/QEMU_EFI")
 
-    assert not caps.supports_filesystem_virtiofs()
-    assert not caps.supports_memorybacking_memfd()
+    assert caps.supports_filesystem_virtiofs()
+    assert caps.supports_memorybacking_memfd()
+    assert caps.supports_redirdev_usb()
+    assert caps.supports_channel_spicevmc()
+
+
+def testDomainCapabilitiesPPC64le():
+    xml = open(DATADIR + "/kvm-ppc64le-domcaps.xml").read()
+    caps = DomainCapabilities(utils.URIs.open_testdriver_cached(), xml)
+
+    custom_mode = caps.cpu.get_mode("custom")
+    assert bool(custom_mode)
+
+    models = caps.get_cpu_models()
+    assert "POWER9" in models
+
+    assert "Default" in caps.label_for_firmware_path(None)
+
+    assert caps.supports_filesystem_virtiofs()
+    assert caps.supports_memorybacking_memfd()
+    assert caps.supports_redirdev_usb()
+    assert not caps.supports_channel_spicevmc()
+
+
+def testDomainCapabilitiesRISCV64():
+    xml = open(DATADIR + "/qemu-riscv64-domcaps.xml").read()
+    caps = DomainCapabilities(utils.URIs.open_testdriver_cached(), xml)
+
+    host_mode = caps.cpu.get_mode("host-passthrough")
+    assert bool(host_mode)
+    assert not host_mode.supported
+    max_mode = caps.cpu.get_mode("maximum")
+    assert bool(max_mode)
+    assert max_mode.supported
+    custom_mode = caps.cpu.get_mode("custom")
+    assert bool(custom_mode)
+    cpu_model = custom_mode.get_model("rv64")
+    assert bool(cpu_model)
+    assert cpu_model.usable
+
+    models = caps.get_cpu_models()
+    assert len(models) > 5
+    assert "veyron-v1" in models
+
+    assert "Default" in caps.label_for_firmware_path(None)
+    assert "Custom:" in caps.label_for_firmware_path("/foobar")
+    assert "UEFI" in caps.label_for_firmware_path("RISCV_VIRT_CODE.fd")
+
+    assert caps.supports_filesystem_virtiofs()
+    assert caps.supports_memorybacking_memfd()
+    assert caps.supports_redirdev_usb()
+    assert caps.supports_channel_spicevmc()
+
+
+def testDomainCapabilitiesLoongArch64():
+    xml = open(DATADIR + "/kvm-loongarch64-domcaps.xml").read()
+    caps = DomainCapabilities(utils.URIs.open_testdriver_cached(), xml)
+
+    host_mode = caps.cpu.get_mode("host-passthrough")
+    assert bool(host_mode)
+    assert host_mode.supported
+    max_mode = caps.cpu.get_mode("maximum")
+    assert bool(max_mode)
+    assert max_mode.supported
+    custom_mode = caps.cpu.get_mode("custom")
+    assert bool(custom_mode)
+    cpu_model = custom_mode.get_model("la132")
+    assert bool(cpu_model)
+    assert cpu_model.usable
+
+    models = caps.get_cpu_models()
+    assert len(models) > 2
+    assert "la464" in models
+
+    assert "Default" in caps.label_for_firmware_path(None)
+    assert "Custom:" in caps.label_for_firmware_path("/foobar")
+    assert "UEFI" in caps.label_for_firmware_path("loongarch64/QEMU_CODE.fd")
+
+    assert caps.supports_filesystem_virtiofs()
+    assert caps.supports_memorybacking_memfd()
+    assert caps.supports_redirdev_usb()
+    assert caps.supports_channel_spicevmc()

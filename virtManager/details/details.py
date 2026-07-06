@@ -1089,7 +1089,7 @@ class vmmDetails(vmmGObjectUI):
 
     def _browse_file(self, callback, reason=None):
         if not reason:
-            reason = self.config.CONFIG_DIR_IMAGE
+            reason = vmmStorageBrowser.REASON_IMAGE
 
         if self.storage_browser is None:
             self.storage_browser = vmmStorageBrowser(self.conn)
@@ -1235,9 +1235,9 @@ class vmmDetails(vmmGObjectUI):
     def _disk_source_browse_clicked_cb(self, src):
         disk = self._get_hw_row()[HW_LIST_COL_DEVICE]
         if disk.is_floppy():
-            reason = self.config.CONFIG_DIR_FLOPPY_MEDIA
+            reason = vmmStorageBrowser.REASON_FLOPPY_MEDIA
         else:
-            reason = self.config.CONFIG_DIR_ISO_MEDIA
+            reason = vmmStorageBrowser.REASON_ISO_MEDIA
 
         def cb(ignore, path):
             self._mediacombo.set_path(path)
@@ -2058,9 +2058,7 @@ class vmmDetails(vmmGObjectUI):
         self.tpmdetails.set_dev(tpmdev)
 
     def _refresh_panic_page(self, dev):
-        model = dev.model or "isa"
-        pmodel = vmmAddHardware.panic_pretty_model(model)
-        self.widget("panic-model").set_text(pmodel)
+        self.widget("panic-model").set_text(dev.model or "")
 
     def _refresh_rng_page(self, dev):
         is_random = dev.backend_model == "random"
@@ -2132,7 +2130,7 @@ class vmmDetails(vmmGObjectUI):
         show_ui("char-target-type", target_type)
         show_ui("char-target-name", chardev.target_name)
         # Only show for the qemu guest agent, which we get async
-        # notifiations about connection state. For spice this UI field
+        # notifications about connection state. For spice this UI field
         # can get out of date
         show_ui("char-target-state", chardev.target_state, doshow=is_qemuga)
         clipboard = _("On") if chardev.source.clipboard_copypaste else _("Off")
@@ -2550,4 +2548,6 @@ class vmmDetails(vmmGObjectUI):
         self._config_boot_move(False)
 
     def _vm_inspection_changed_cb(self, vm):
-        self._refresh_os_page()
+        row = self._get_hw_row()
+        if row and row[HW_LIST_COL_TYPE] == HW_LIST_TYPE_OS:
+            self._refresh_os_page()

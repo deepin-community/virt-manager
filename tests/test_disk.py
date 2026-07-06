@@ -82,6 +82,7 @@ def test_disk_dir_searchable(monkeypatch):
         searchdata = virtinst.DeviceDisk.check_path_search(conn,
                 tmpdir + "/footest")
         assert searchdata.uid == os.getuid()
+        # pylint: disable=use-implicit-booleaness-not-comparison
         assert searchdata.fixlist == []
 
         # Remove perms on the tmpdir, now it should report failures
@@ -111,6 +112,14 @@ def test_disk_path_in_use_kernel():
     vms = virtinst.DeviceDisk.path_in_use_by(
             conn, "/pool-dir/test-arm-kernel")
     assert vms == ["test-arm-kernel"]
+
+
+def test_disk_paths_in_use():
+    conn = utils.URIs.open_kvm()
+
+    vms = virtinst.DeviceDisk.paths_in_use_by(
+            conn, ["/pool-dir/test-arm-kernel", "/pool-dir/test-arm-initrd"])
+    assert vms == [["test-arm-kernel"], ["test-arm-kernel"]]
 
 
 def test_disk_diskbackend_misc():
@@ -161,6 +170,14 @@ def test_disk_diskbackend_misc():
     disk = virtinst.DeviceDisk(conn)
     disk.set_source_path(volpath)
     assert disk.get_size()
+
+    disk = virtinst.DeviceDisk(conn)
+    try:
+        disk.set_source_path(
+                "/virtinst-testsuite-fail-pool-install/test.qcow2")
+        raise AssertionError("expected failure")
+    except RuntimeError as e:
+        assert "StoragePool.install testsuite mocked failure" in str(e)
 
 
 def test_disk_diskbackend_parse():

@@ -1,0 +1,17 @@
+Description: Clicking on "Browse Local" has no effect and throws an error
+Origin: upstream, https://github.com/virt-manager/virt-manager/pull/911
+Bug: https://github.com/virt-manager/virt-manager/issues/901
+Reviewed-by: Lee Garrett <debian@rocketjump.eu>
+Last-Update: 2025-10-28
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/virtManager/storagebrowse.py
++++ b/virtManager/storagebrowse.py
+@@ -181,6 +181,7 @@
+         data = _BrowseReasonMetadata(self._browse_reason)
+         gsettings_key = data.gsettings_key
+ 
++        start_folder = None
+         if gsettings_key:
+             start_folder = self.config.get_default_directory(gsettings_key)
+ 

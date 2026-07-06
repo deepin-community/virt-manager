@@ -3,6 +3,8 @@
 
 import time
 
+import dogtail.config
+
 
 def check(func, timeout=2):
     """
@@ -19,6 +21,26 @@ def check(func, timeout=2):
         time.sleep(interval)
 
 
+class dogtail_timeout:
+    """
+    Context helper to run a specific check with custom timeout, in seconds
+    """
+    def __init__(self, timeout):
+        backoff = dogtail.config.config.searchBackoffDuration
+        self._tmpval = int(timeout / backoff)
+        self._origval = dogtail.config.config.searchCutoffCount
+
+    def _set(self, val):
+        dogtail.config.config.searchCutoffCount = val
+
+    def __enter__(self):
+        self._set(self._tmpval)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._set(self._origval)
+
+
 def walkUIList(app, win, lst, error_cb, reverse=False):
     """
     Toggle down through a UI list like addhardware, net/storage/iface
@@ -29,6 +51,7 @@ def walkUIList(app, win, lst, error_cb, reverse=False):
     all_cells = lst.findChildren(lambda w: w.roleName == "table cell")
     if reverse:
         all_cells.reverse()
+    all_cells[0].point()
     all_cells[0].click()
     cells_per_selection = len([c for c in all_cells if c.focused])
 
@@ -88,7 +111,7 @@ def test_xmleditor_interactions(app, win, finish):
 def get_xmleditor_xml(_app, win):
     win.find("XML", "page tab").click()
     xmleditor = win.find("XML editor")
-    xml = xmleditor.get_text()
+    xml = xmleditor.get_text_override()
     win.find("Details", "page tab").click()
     check(lambda: not xmleditor.showing)
     return xml
