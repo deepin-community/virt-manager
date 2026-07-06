@@ -9,11 +9,13 @@
   <memory>65536</memory>
   <currentMemory>65536</currentMemory>
   <vcpu>2</vcpu>
-  <os>
+  <os firmware="efi">
     <type arch="aarch64" machine="virt">hvm</type>
-    <loader readonly="yes" type="pflash">/usr/share/AAVMF/AAVMF_CODE.fd</loader>
     <boot dev="hd"/>
   </os>
+  <features>
+    <acpi/>
+  </features>
   <cpu mode="host-passthrough"/>
   <clock offset="utc"/>
   <devices>
@@ -51,6 +53,9 @@
     </channel>
     <input type="tablet" bus="usb"/>
     <input type="keyboard" bus="usb"/>
+    <tpm>
+      <backend type="emulator"/>
+    </tpm>
     <graphics type="vnc" port="-1"/>
     <video>
       <model type="virtio"/>
@@ -59,5 +64,6 @@
     <rng model="virtio">
       <backend model="random">/dev/urandom</backend>
     </rng>
+    <panic/>
   </devices>
 </domain>

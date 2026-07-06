@@ -1,8 +1,8 @@
-Tests: help.sh
+Tests: help-virt-install
 Restrictions: superficial
-Depends: virtinst,
+Depends: virt-install,
 
-Tests: virt-manager.sh
+Tests: help-virt-manager
 Restrictions: superficial
 Depends: virt-manager,
  xvfb,

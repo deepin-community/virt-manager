@@ -22,7 +22,8 @@ class ConnectionInfo(object):
     """
     def __init__(self, conn, gdev):
         self.gtype = gdev.type
-        self.gport = gdev.port and str(gdev.port) or None
+        self.gidx = gdev.get_xml_idx()
+        self.gport = str(gdev.port) if gdev.port else None
         self.gsocket = (gdev.listens and gdev.listens[0].socket) or gdev.socket
         self.gaddr = gdev.listen or "127.0.0.1"
         self.gtlsport = gdev.tlsPort or None
@@ -69,7 +70,8 @@ class ConnectionInfo(object):
 
         if (not self.need_tunnel() and
             self.transport and
-            self._is_listen_localhost(self.get_conn_host()[0])):
+            self._is_listen_localhost() and
+            not self._is_listen_localhost(self._connhost)):
             return _("Guest is on a remote host with transport '%s' "
                 "but is only configured to listen locally. "
                 "To connect remotely you will need to change the guest's "

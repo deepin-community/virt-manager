@@ -80,6 +80,19 @@ def testShowDelete(app):
     app.wait_for_exit()
 
 
+def testShowSystray(app):
+    opts = ["--test-options=fake-systray", "--show-systray"]
+    app.open(use_uri=False,
+             extra_opts=opts,
+             window_name="vmm-fake-systray")
+    app.sleep(1)
+    app.stop()
+
+    app.open(uri="test:///default",
+             extra_opts=opts,
+             window_name="vmm-fake-systray")
+
+
 def testShowRemoteDBusConnect(app):
     """
     Test the remote app dbus connection
@@ -92,10 +105,11 @@ def testShowRemoteDBusConnect(app):
         newapp = lib.app.VMMDogtailApp("test:///default")
         newapp.open(check_already_running=False,
                 extra_opts=opts)
-        lib.utils.check(lambda: not newapp.is_running())
+        timeout = 10
+        lib.utils.check(lambda: not newapp.is_running(), timeout)
         vapps = [a for a in newapp.tree.root.applications() if
                  a.name == "virt-manager"]
-        lib.utils.check(lambda: len(vapps) == 1)
+        lib.utils.check(lambda: len(vapps) == 1, timeout=timeout)
         # Ensure connection showed up
         app.topwin.find("test default", "table cell")
 
@@ -139,15 +153,12 @@ def testCLIFirstRunURIBad(app):
     app.click_alert_button("bad:///uri", "Close")
 
 
-def testCLIFirstRunNoLibvirtd(app):
+def testCLIFirstRunNoURI(app):
     # Emulate first run with no libvirtd detected
-    app.open(use_uri=False, firstrun_uri="bad:///uri",
-            extra_opts=["--test-options=fake-no-libvirtd"])
+    app.open(use_uri=False, firstrun_uri="")
     errlabel = app.topwin.find("error-label")
     lib.utils.check(
             lambda: "Checking for virtualization" in errlabel.text)
-    lib.utils.check(
-            lambda: "libvirtd service does not appear" in errlabel.text)
     lib.utils.check(
             lambda: "detect a default hypervisor" in errlabel.text)
 
@@ -177,18 +188,31 @@ def testCLINoFirstRun(app):
     lib.utils.check(lambda: app.topwin.showing)
 
 
-def testCLINoFork(app):
-    # Test app without forking
+def _testCLIFork(app, opts):
     app.open(first_run=False, enable_libguestfs=None,
-            use_uri=False, no_fork=False)
+            use_uri=False, allow_debug=False,
+            extra_opts=opts)
     app.wait_for_exit()
+    lib.utils.check(lambda: app.has_dbus())
     app.topwin.window_close()
     lib.utils.check(lambda: not app.has_dbus())
 
 
+def testCLIFork(app):
+    # Test app with --fork
+    _testCLIFork(app, ["--fork"])
+
+
+@unittest.mock.patch.dict('os.environ', {"VIRT_MANAGER_DEFAULT_FORK": "yes"})
+def testCLIForkEnv(app):
+    # Test with fork via env
+    _testCLIFork(app, [])
+
+
 def testCLIGTKArgs(app):
     # Ensure gtk arg passthrough works
-    app.open(extra_opts=["--gtk-debug=misc"])
+    # Also test --no-fork is a no-op
+    app.open(extra_opts=["--gtk-debug=misc", "--no-fork"])
     lib.utils.check(lambda: app.topwin.showing)
 
 

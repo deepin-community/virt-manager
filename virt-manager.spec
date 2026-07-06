@@ -7,15 +7,15 @@
 # End local config
 
 Name: virt-manager
-Version: 4.1.0
+Version: 5.0.0
 Release: 1%{?dist}
 %global verrel %{version}-%{release}
 
 Summary: Desktop tool for managing virtual machines via libvirt
-License: GPLv2+
+License: GPL-2.0-or-later
 BuildArch: noarch
 URL: https://virt-manager.org/
-Source0: https://virt-manager.org/download/sources/%{name}/%{name}-%{version}.tar.gz
+Source0: https://virt-manager.org/download/sources/%{name}/%{name}-%{version}.tar.xz
 
 
 Requires: virt-manager-common = %{verrel}
@@ -24,9 +24,6 @@ Requires: gtk3 >= 3.22.0
 Requires: libvirt-glib >= 0.0.9
 Requires: gtk-vnc2
 Requires: spice-gtk3
-
-# We can work with gtksourceview 3 or gtksourceview4, pick the latest one
-Requires: gtksourceview4
 
 # virt-manager is one of those apps that people will often install onto
 # a headless machine for use over SSH. This means the virt-manager dep
@@ -42,6 +39,10 @@ Requires: dconf
 # no ambiguity.
 Requires: vte291
 
+# We can use GtkTextView, gtksourceview 3 or gtksourceview4, recommend
+# the latest one but don't make it a hard requirement
+Recommends: gtksourceview4
+
 # Weak dependencies for the common virt-manager usecase
 Recommends: (libvirt-daemon-kvm or libvirt-daemon-qemu)
 Recommends: libvirt-daemon-config-network
@@ -52,7 +53,7 @@ Suggests: python3-libguestfs
 BuildRequires: gettext
 BuildRequires: python3-devel
 BuildRequires: python3-docutils
-BuildRequires: python3-setuptools
+BuildRequires: meson
 
 
 %description
@@ -103,18 +104,16 @@ machine).
 
 
 %build
-%if %{default_hvs}
-%global _default_hvs --default-hvs %{default_hvs}
-%endif
-
-./setup.py configure \
-    %{?_default_hvs}
-
+%meson \
+    -Ddefault-hvs=%{default_hvs} \
+    -Dupdate-icon-cache=false \
+    -Dcompile-schemas=false \
+    -Dtests=disabled
+%meson_build
 
 %install
-./setup.py \
-    --no-update-icon-cache --no-compile-schemas \
-    install -O1 --root=%{buildroot}
+%meson_install
+
 %find_lang %{name}
 
 %if 0%{?py_byte_compile:1}

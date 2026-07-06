@@ -47,6 +47,7 @@ class vmmEngine(vmmGObject):
     CLI_SHOW_DOMAIN_CONSOLE = "console"
     CLI_SHOW_DOMAIN_DELETE = "delete"
     CLI_SHOW_HOST_SUMMARY = "summary"
+    CLI_SHOW_SYSTEM_TRAY = "systray"
 
     @classmethod
     def get_instance(cls):
@@ -131,14 +132,14 @@ class vmmEngine(vmmGObject):
         """
         from .lib import connectauth
 
-        tryuri = vmmCreateConn.default_uri()
-        log.debug("Probed default URI=%s", tryuri)
+        detected_uri = vmmCreateConn.default_uri()
+        log.debug("Probed default URI=%s", detected_uri)
         if self.config.CLITestOptions.firstrun_uri is not None:
-            tryuri = self.config.CLITestOptions.firstrun_uri or None
-            log.debug("Using test-options firstrun_uri=%s", tryuri)
+            detected_uri = self.config.CLITestOptions.firstrun_uri or None
+            log.debug("Using test-options firstrun_uri=%s", detected_uri)
 
         manager = self._get_manager()
-        msg = connectauth.setup_first_uri(self.config, tryuri)
+        msg = connectauth.setup_first_uri(self.config, detected_uri)
         if msg:
             manager.set_startup_error(msg)
             return
@@ -149,7 +150,7 @@ class vmmEngine(vmmGObject):
                 if ConnectError:
                     self._handle_conn_error(c, ConnectError)
 
-            conn = vmmConnectionManager.get_instance().add_conn(tryuri)
+            conn = vmmConnectionManager.get_instance().add_conn(detected_uri)
             conn.set_autoconnect(True)
             conn.connect_once("open-completed", _open_completed)
             conn.open()
@@ -218,6 +219,7 @@ class vmmEngine(vmmGObject):
         self._application.connect("activate",
             self._on_gtk_application_activated)
 
+        # pylint: disable=no-member
         action = Gio.SimpleAction.new("cli_command",
             GLib.VariantType.new("(sss)"))
         action.connect("activate", self._handle_cli_command)
@@ -332,6 +334,30 @@ class vmmEngine(vmmGObject):
         """
         return vmmSystray.get_instance().is_embedded()
 
+    def _show_systray_from_cli(self):
+        """
+        Handler for --show-systray from CLI.
+        We force show the systray, and wait for a timeout to report if
+        its embedded. If not we raise an error and exit the app
+        """
+        vmmSystray.get_instance().show_from_cli()
+
+        @_show_startup_error
+        def check(self, count):
+            count -= 1
+            if self._systray_is_embedded():
+                log.debug("systray embedded")
+                return
+            if count <= 0:  # pragma: no cover
+                raise RuntimeError("systray did not show up")
+            self.timeout_add(1000, check, self, count)  # pragma: no cover
+
+        startcount = 5
+        timeout = 1000
+        if self.config.CLITestOptions.fake_systray:
+            timeout = 1
+        self.timeout_add(timeout, check, self, startcount)
+
     def _can_exit(self):
         return (self._window_count <= 0 and not
                 self._systray_is_embedded())
@@ -441,6 +467,9 @@ class vmmEngine(vmmGObject):
                               self.CLI_SHOW_DOMAIN_CONSOLE,
                               self.CLI_SHOW_DOMAIN_DELETE]):
             self._cli_show_vm_helper(uri, clistr, show_window)
+        elif show_window == self.CLI_SHOW_SYSTEM_TRAY:
+            # Handled elsewhere
+            pass
         else:  # pragma: no cover
             raise RuntimeError("Unknown cli window command '%s'" %
                 show_window)
@@ -460,7 +489,13 @@ class vmmEngine(vmmGObject):
 
         log.debug("processing cli command uri=%s show_window=%s domain=%s",
             uri, show_window, domain)
-        if not uri:
+
+        if show_window == self.CLI_SHOW_SYSTEM_TRAY:
+            log.debug("Launching only in the system tray")
+            self._show_systray_from_cli()
+            if not uri:
+                return
+        elif not uri:
             log.debug("No cli action requested, launching default window")
             self._get_manager().show()
             return

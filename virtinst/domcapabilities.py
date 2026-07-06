@@ -113,12 +113,15 @@ class _Devices(_CapsBlock):
     graphics = XMLChildProperty(_make_capsblock("graphics"), is_single=True)
     tpm = XMLChildProperty(_make_capsblock("tpm"), is_single=True)
     filesystem = XMLChildProperty(_make_capsblock("filesystem"), is_single=True)
+    redirdev = XMLChildProperty(_make_capsblock("redirdev"), is_single=True)
+    channel = XMLChildProperty(_make_capsblock("channel"), is_single=True)
 
 
 class _Features(_CapsBlock):
     XML_NAME = "features"
     gic = XMLChildProperty(_make_capsblock("gic"), is_single=True)
     sev = XMLChildProperty(_SEV, is_single=True)
+    hyperv = XMLChildProperty(_make_capsblock("hyperv"), is_single=True)
 
 
 class _MemoryBacking(_CapsBlock):
@@ -280,7 +283,7 @@ class DomainCapabilities(XMLBuilder):
         ],
         "aarch64": [
             r".*AAVMF_CODE\.fd",  # RHEL
-            r".*aarch64/QEMU_EFI.*",  # gerd's firmware repo
+            r".*aarch64/QEMU_EFI.*",  # fedora, gerd's firmware repo
             r".*aarch64.*",  # generic attempt at a catchall
             r".*edk2-aarch64-code\.fd",  # upstream qemu
         ],
@@ -288,6 +291,14 @@ class DomainCapabilities(XMLBuilder):
             r".*AAVMF32_CODE\.fd",  # Debian qemu-efi-arm package
             r".*arm/QEMU_EFI.*",  # fedora, gerd's firmware repo
             r".*edk2-arm-code\.fd"  # upstream qemu
+        ],
+        "riscv64": [
+            r".*RISCV_VIRT_CODE\..*",  # Fedora, Debian
+            r".*riscv64.*",  # generic attempt at a catchall
+        ],
+        "loongarch64": [
+            r".*loongarch64/QEMU_CODE\..*",  # Fedora
+            r".*loongarch64.*",  # generic attempt at a catchall
         ],
     }
 
@@ -334,7 +345,7 @@ class DomainCapabilities(XMLBuilder):
         """
         Return True if we know how to setup UEFI for the passed arch
         """
-        return self.arch in list(self._uefi_arch_patterns.keys())
+        return self.arch in self._uefi_arch_patterns
 
     def supports_uefi_loader(self):
         """
@@ -448,6 +459,30 @@ class DomainCapabilities(XMLBuilder):
 
         return self.devices.graphics.get_enum("type").has_value("spice")
 
+    def supports_channel_spicevmc(self):
+        """
+        Return False if libvirt explicitly advertises no support for
+        spice channel
+        """
+        if self.devices.channel.supported is None:
+            # Follow the original behavior in case of talking to older
+            # libvirt.
+            return True
+
+        return self.devices.channel.get_enum("type").has_value("spicevmc")
+
+    def supports_redirdev_usb(self):
+        """
+        Return False if libvirt explicitly advertises no support for
+        USB redirect
+        """
+        if self.devices.redirdev.supported is None:
+            # Follow the original behavior in case of talking to older
+            # libvirt.
+            return True
+
+        return self.devices.redirdev.get_enum("bus").has_value("usb")
+
     def supports_filesystem_virtiofs(self):
         """
         Return True if libvirt advertises support for virtiofs
@@ -460,3 +495,12 @@ class DomainCapabilities(XMLBuilder):
         Return True if libvirt advertises support for memfd memory backend
         """
         return self.memorybacking.get_enum("sourceType").has_value("memfd")
+
+    def supported_hyperv_features(self):
+        """
+        Return list of supported Hyper-V features.
+        """
+        if not self.features.hyperv.supported:
+            return []
+
+        return self.features.hyperv.get_enum("features").get_values()

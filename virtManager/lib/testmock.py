@@ -163,17 +163,11 @@ class CLITestOptionsClass:
         managed save issues
 
     * test-vm-run-fail: Make VM run fail, so we can test the error path
-
-    * spice-agent: Make spice-agent detection return true in viewer.py
+    * test-update-device-fail: Make UpdateDevice API call fail
 
     * firstrun-uri: If set, use this as the initial connection URI
         if we are doing firstrun testing
-    * fake-no-libvirtd: If doing firstrun testing, fake that
-        libvirtd is not installed
     * fake-vnc-username: Fake VNC username auth request
-    * fake-console-resolution: Fake viewer console resolution response.
-        Spice doesn't return values here when we are just testing
-        against seabios in uitests, this fakes it to hit more code paths
     * fake-systray: Enable the fake systray window
     * fake-virtbootstrap: Mock the virtBootstrap module, since getting
         it to actually work across fedora versions is hard
@@ -221,11 +215,9 @@ class CLITestOptionsClass:
         self.enable_libguestfs = _get("enable-libguestfs")
         self.test_managed_save = _get("test-managed-save")
         self.test_vm_run_fail = _get("test-vm-run-fail")
-        self.spice_agent = _get("spice-agent")
+        self.test_update_device_fail = _get("test-update-device-fail")
         self.firstrun_uri = _get_value("firstrun-uri")
-        self.fake_no_libvirtd = _get("fake-no-libvirtd")
         self.fake_vnc_username = _get("fake-vnc-username")
-        self.fake_console_resolution = _get("fake-console-resolution")
         self.fake_systray = _get("fake-systray")
         self.object_denylist = _get_value("object-denylist")
         self.conn_crash = _get("conn-crash")

@@ -220,6 +220,8 @@ class vmmConnection(vmmGObject):
             label = "QEMU TCG"
         elif domtype == "kvm":
             label = "KVM"
+        elif domtype == "hvf":
+            label = "Hypervisor.framework"  # pragma: no cover
 
         return label
 
@@ -647,6 +649,13 @@ class vmmConnection(vmmGObject):
                 LibvirtEnumMap.domain_agent_lifecycle_str(state, reason))
 
         obj = self.get_vm_by_name(name)
+
+        # This event is triggered when deleting external snapshots and it changes
+        # shutoff VM into paused and makes that VM unusable until virt-manager is
+        # restarted so we need to ignore it in case VM is shutoff.
+        if obj and obj.is_shutoff():  # pragma: no cover
+            log.debug("received agent lifecycle event but domain is shutoff, ignoring it")
+            return
 
         if obj:
             self.idle_add(obj.recache_from_event_loop)

@@ -190,7 +190,7 @@ class vmmFSDetails(vmmGObjectUI):
                 self.widget("fs-format-combo"), dev.driver_format)
 
         if dev.type != DeviceFilesystem.TYPE_RAM:
-            self.widget("fs-source").set_text(dev.source)
+            self.widget("fs-source").set_text(dev.source or "")
         else:
             self.widget("fs-ram-source-spin").set_value(int(dev.source) // 1024)
         self.widget("fs-target").set_text(dev.target or "")
@@ -268,8 +268,8 @@ class vmmFSDetails(vmmGObjectUI):
                 textent.set_text(path)
 
         reason = (isdir and
-                  self.config.CONFIG_DIR_FS or
-                  self.config.CONFIG_DIR_IMAGE)
+                  vmmStorageBrowser.REASON_FS or
+                  vmmStorageBrowser.REASON_IMAGE)
 
         if self._storage_browser is None:
             self._storage_browser = vmmStorageBrowser(self.conn)
