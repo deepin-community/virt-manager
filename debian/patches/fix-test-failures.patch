@@ -1,0 +1,83 @@
+Description: Fix build failures with newer osinfo-db and loongarch64 tests
+ Backport the upstream virt-manager fix which adds a virtio-scsi
+ controller when the installer attaches an unattended/cloud-init
+ install CDROM, so SCSI CDROMs are picked up on architectures like
+ loongarch64. Also sync CLI test data with the newer osinfo-db used
+ in the build environment: Fedora archive media URLs are now served
+ over https instead of http.
+Author: lichenggang <lichenggang@uniontech.com>
+Origin: upstream, https://github.com/virt-manager/virt-manager
+Bug: https://github.com/deepin-community/virt-manager/pull/8
+Forwarded: not-needed
+Last-Update: 2026-08-19
+---
+diff --git a/tests/data/cli/compare/virt-install-osinfo-unattended-treeapis.xml b/tests/data/cli/compare/virt-install-osinfo-unattended-treeapis.xml
+index 1140bf0..5f3c347 100644
+--- a/tests/data/cli/compare/virt-install-osinfo-unattended-treeapis.xml
++++ b/tests/data/cli/compare/virt-install-osinfo-unattended-treeapis.xml
+@@ -13,7 +13,7 @@
+     <type arch="x86_64" machine="pc-i440fx-6.1">hvm</type>
+     <kernel>/VIRTINST-TESTSUITE/vmlinuz</kernel>
+     <initrd>/VIRTINST-TESTSUITE/initrd.img</initrd>
+-    <cmdline>ks=file:/fedora.ks method=http://archive.fedoraproject.org/pub/archive/fedora/linux/releases/17/Fedora/x86_64/os/</cmdline>
++    <cmdline>ks=file:/fedora.ks method=https://archive.fedoraproject.org/pub/archive/fedora/linux/releases/17/Fedora/x86_64/os/</cmdline>
+   </os>
+   <features>
+     <acpi/>
+diff --git a/tests/data/cli/compare/virt-install-osinfo-url-unattended.xml b/tests/data/cli/compare/virt-install-osinfo-url-unattended.xml
+index fe653b8..2388120 100644
+--- a/tests/data/cli/compare/virt-install-osinfo-url-unattended.xml
++++ b/tests/data/cli/compare/virt-install-osinfo-url-unattended.xml
+@@ -13,7 +13,7 @@
+     <type arch="x86_64" machine="q35">hvm</type>
+     <kernel>/VIRTINST-TESTSUITE/vmlinuz</kernel>
+     <initrd>/VIRTINST-TESTSUITE/initrd.img</initrd>
+-    <cmdline>ks=file:/fedora.ks inst.repo=http://archives.fedoraproject.org/pub/archive/fedora/linux/releases/26/Server/x86_64/os/</cmdline>
++    <cmdline>ks=file:/fedora.ks inst.repo=https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/26/Server/x86_64/os/</cmdline>
+   </os>
+   <features>
+     <acpi/>
+diff --git a/tests/data/cli/compare/virt-install-osinfo-url-with-disk.xml b/tests/data/cli/compare/virt-install-osinfo-url-with-disk.xml
+index 99fb90f..11fce0a 100644
+--- a/tests/data/cli/compare/virt-install-osinfo-url-with-disk.xml
++++ b/tests/data/cli/compare/virt-install-osinfo-url-with-disk.xml
+@@ -13,7 +13,7 @@
+     <type arch="x86_64" machine="q35">hvm</type>
+     <kernel>/VIRTINST-TESTSUITE/vmlinuz</kernel>
+     <initrd>/VIRTINST-TESTSUITE/initrd.img</initrd>
+-    <cmdline>method=http://archives.fedoraproject.org/pub/archive/fedora/linux/releases/26/Server/x86_64/os/</cmdline>
++    <cmdline>method=https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/26/Server/x86_64/os/</cmdline>
+   </os>
+   <features>
+     <acpi/>
+diff --git a/tests/data/cli/compare/virt-install-osinfo-url.xml b/tests/data/cli/compare/virt-install-osinfo-url.xml
+index 37fcc10..ea1937a 100644
+--- a/tests/data/cli/compare/virt-install-osinfo-url.xml
++++ b/tests/data/cli/compare/virt-install-osinfo-url.xml
+@@ -13,7 +13,7 @@
+     <type arch="x86_64" machine="q35">hvm</type>
+     <kernel>/VIRTINST-TESTSUITE/vmlinuz</kernel>
+     <initrd>/VIRTINST-TESTSUITE/initrd.img</initrd>
+-    <cmdline>method=http://archives.fedoraproject.org/pub/archive/fedora/linux/releases/26/Server/x86_64/os/</cmdline>
++    <cmdline>method=https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/26/Server/x86_64/os/</cmdline>
+   </os>
+   <features>
+     <acpi/>
+diff --git a/virtinst/install/installer.py b/virtinst/install/installer.py
+index df74eaf..f74155a 100644
+--- a/virtinst/install/installer.py
++++ b/virtinst/install/installer.py
+@@ -187,6 +187,13 @@ class Installer(object):
+         self._unattended_install_cdrom_device = dev.target
+         guest.add_device(dev)
+ 
++        # The CDROM we just added might be a SCSI one. If that's the case,
++        # libvirt will automatically add the necessary controller for us, but
++        # depending on the architecture its choice of model might not be
++        # usable by the guest OS. Try to add a virtio-scsi controller, if
++        # supported, for the best chance of the CDROM actually being picked up
++        guest._add_virtioscsi_controller()
++
+         if self.conn.in_testsuite():
+             # Hack to set just the XML path differently for the test suite.
+             # Setting this via regular 'path' will error that it doesn't exist
