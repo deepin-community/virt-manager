@@ -951,11 +951,14 @@ Some examples:
     has been specified, virt-install will default to /sbin/init, otherwise
     will default to /bin/sh.
 
-``--boot uefi``
+``--boot uefi``, ``--boot uefi=on``
     Configure the VM to boot from UEFI. In order for virt-install to know the
     correct UEFI parameters, libvirt needs to be advertising known UEFI binaries
     via domcapabilities XML, so this will likely only work if using properly
     configured distro packages.
+
+``--boot uefi=off``
+    Do not use UEFI if the VM would normally default to it.
 
 ``--boot loader=/.../OVMF_CODE.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/.../OVMF_VARS.fd,loader_secure=no``
     Specify that the virtual machine use the custom OVMF binary as boot firmware,

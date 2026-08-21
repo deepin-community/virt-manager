@@ -219,7 +219,7 @@ class Guest(XMLBuilder):
         self.num_pcie_root_ports = 14
 
         self.skip_default_osinfo = False
-        self.uefi_requested = False
+        self.uefi_requested = None
         self.__osinfo = None
         self._capsinfo = None
         self._domcaps = None
@@ -591,6 +591,22 @@ class Guest(XMLBuilder):
         log.debug("Setting default UEFI path=%s", path)
         self.set_uefi_path(path)
 
+    def disable_uefi(self):
+        self.os.firmware = None
+        self.os.loader = None
+        self.os.loader_ro = None
+        self.os.loader_type = None
+        self.os.loader_secure = None
+        self.os.nvram = None
+        self.os.nvram_template = None
+        for feature in self.os.firmware_features:
+            self.os.remove_child(feature)
+
+        # Force remove any properties we don't know about
+        self._xmlstate.xmlapi.node_force_remove("./os/firmware")
+        self._xmlstate.xmlapi.node_force_remove("./os/nvram")
+        self._xmlstate.xmlapi.node_force_remove("./os/loader")
+
     def has_spice(self):
         for gfx in self.devices.graphics:
             if gfx.type == gfx.TYPE_SPICE:
@@ -861,6 +877,9 @@ class Guest(XMLBuilder):
         return path
 
     def _set_default_uefi(self):
+        if self.uefi_requested is False:
+            return
+
         use_default_uefi = (self.prefers_uefi() and
             not self.os.kernel and
             not self.os.loader and
